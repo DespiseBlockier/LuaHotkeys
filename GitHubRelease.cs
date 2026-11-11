@@ -44,8 +44,8 @@ namespace LuaHotkeys
 
         internal static GitHubRelease Check(Version current, bool installed)
         {
-            // Use the operating system's HTTPS protocol and certificate settings.
-            ServicePointManager.SecurityProtocol = SecurityProtocolType.SystemDefault;
+            // The legacy .NET Framework compiler target requires TLS 1.2 to be enabled explicitly.
+            ServicePointManager.SecurityProtocol = SecurityProtocolType.Tls12;
             var uri = new Uri("https://api.github.com/repos/" + Repository + "/releases/latest");
             using (var response = Open(uri, true))
             using (var stream = response.GetResponseStream())

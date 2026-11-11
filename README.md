@@ -15,7 +15,7 @@ Open **Update LuaHotkeys** from the Start menu for an installed copy. For the po
 
 The updater checks the latest stable GitHub release, verifies the package hash, and applies it to that copy. The installed build reuses your original install folder. The portable build replaces its program files and keeps your scripts in place. If LuaHotkeys has unsaved edits, save them and close the app when asked.
 
-For a copy from before 0.3.0, run the newer MSI or extract the newer portable ZIP into the same folder once to get the updater.
+For a copy from before 0.3.1, run the newer MSI or extract the newer portable ZIP into the same folder once to get the updater.
 
 ## Run or edit a script
 
