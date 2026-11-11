@@ -22,10 +22,55 @@
               <Shortcut Id="LuaHotkeysShortcut" Directory="ProgramMenuFolder" Name="LuaHotkeys"
                         Advertise="no" WorkingDirectory="INSTALLFOLDER" />
             </File>
+            <File Id="LuaHotkeysUpdaterExe" Source="$(var.AppDirectory)\LuaHotkeysUpdater.exe">
+              <Shortcut Id="LuaHotkeysUpdaterShortcut" Directory="ProgramMenuFolder" Name="Update LuaHotkeys"
+                        Advertise="no" WorkingDirectory="INSTALLFOLDER" />
+            </File>
             <File Id="LuaRuntimeDll" Source="$(var.AppDirectory)\lua5.1.dll" DefaultLanguage="0" />
             <File Id="LuaLicense" Source="$(var.AppDirectory)\Lua-LICENSE.txt" />
             <RegistryValue Root="HKCU" Key="Software\LuaHotkeys\Installer" Name="InstallFolder"
                            Type="string" Value="[INSTALLFOLDER]" KeyPath="yes" />
+            <RegistryValue Root="HKCU" Key="Software\Classes\.lhk" Type="string" Value="LuaHotkeys.Script" />
+            <RegistryValue Root="HKCU" Key="Software\Classes\.lhk\OpenWithProgids"
+                           Name="LuaHotkeys.Script" Type="string" Value="" />
+            <RegistryValue Root="HKCU" Key="Software\Classes\.lhk\ShellNew" Name="NullFile" Type="string" Value="" />
+            <RegistryValue Root="HKCU" Key="Software\Classes\.luahotkeys" Type="string" Value="LuaHotkeys.Script" />
+            <RegistryValue Root="HKCU" Key="Software\Classes\.luahotkeys\OpenWithProgids"
+                           Name="LuaHotkeys.Script" Type="string" Value="" />
+            <RegistryValue Root="HKCU" Key="Software\Classes\LuaHotkeys.Script" Type="string" Value="LuaHotkeys Script" />
+            <RegistryValue Root="HKCU" Key="Software\Classes\LuaHotkeys.Script\DefaultIcon"
+                           Type="string" Value="&quot;[#LuaHotkeysExe]&quot;,0" />
+            <RegistryValue Root="HKCU" Key="Software\Classes\LuaHotkeys.Script\shell" Type="string" Value="open" />
+            <RegistryValue Root="HKCU" Key="Software\Classes\LuaHotkeys.Script\shell\open"
+                           Type="string" Value="Run with LuaHotkeys" />
+            <RegistryValue Root="HKCU" Key="Software\Classes\LuaHotkeys.Script\shell\open\command"
+                           Type="string" Value="&quot;[#LuaHotkeysExe]&quot; --run &quot;%1&quot;" />
+            <RegistryValue Root="HKCU" Key="Software\Classes\LuaHotkeys.Script\shell\edit"
+                           Type="string" Value="Edit in LuaHotkeys" />
+            <RegistryValue Root="HKCU" Key="Software\Classes\LuaHotkeys.Script\shell\edit\command"
+                           Type="string" Value="&quot;[#LuaHotkeysExe]&quot; --edit &quot;%1&quot;" />
+
+            <RegistryValue Root="HKCU" Key="Software\Classes\SystemFileAssociations\.lhk\shell\edit"
+                           Type="string" Value="Edit in LuaHotkeys" />
+            <RegistryValue Root="HKCU" Key="Software\Classes\SystemFileAssociations\.lhk\shell\edit\command"
+                           Type="string" Value="&quot;[#LuaHotkeysExe]&quot; --edit &quot;%1&quot;" />
+            <RegistryValue Root="HKCU" Key="Software\Classes\SystemFileAssociations\.luahotkeys\shell\edit"
+                           Type="string" Value="Edit in LuaHotkeys" />
+            <RegistryValue Root="HKCU" Key="Software\Classes\SystemFileAssociations\.luahotkeys\shell\edit\command"
+                           Type="string" Value="&quot;[#LuaHotkeysExe]&quot; --edit &quot;%1&quot;" />
+
+            <RegistryValue Root="HKCU" Key="Software\Classes\Applications\LuaHotkeys.exe"
+                           Name="FriendlyAppName" Type="string" Value="LuaHotkeys" />
+            <RegistryValue Root="HKCU" Key="Software\Classes\Applications\LuaHotkeys.exe\SupportedTypes"
+                           Name=".luahotkeys" Type="string" Value="" />
+            <RegistryValue Root="HKCU" Key="Software\Classes\Applications\LuaHotkeys.exe\SupportedTypes"
+                           Name=".lhk" Type="string" Value="" />
+            <RegistryValue Root="HKCU" Key="Software\Classes\Applications\LuaHotkeys.exe\shell\open\command"
+                           Type="string" Value="&quot;[#LuaHotkeysExe]&quot; &quot;%1&quot;" />
+            <RegistryValue Root="HKCU" Key="Software\Classes\Applications\LuaHotkeys.exe\shell\edit"
+                           Type="string" Value="Edit in LuaHotkeys" />
+            <RegistryValue Root="HKCU" Key="Software\Classes\Applications\LuaHotkeys.exe\shell\edit\command"
+                           Type="string" Value="&quot;[#LuaHotkeysExe]&quot; --edit &quot;%1&quot;" />
             <RemoveFolder Id="RemoveEmptyInstallFolder" On="uninstall" />
           </Component>
         </Directory>
@@ -36,6 +81,12 @@
     <Feature Id="LuaHotkeysFeature" Title="LuaHotkeys" Level="1">
       <ComponentRef Id="ApplicationFiles" />
     </Feature>
+
+    <CustomAction Id="RefreshExplorerAssociations" FileKey="LuaHotkeysExe" ExeCommand="--refresh-associations"
+                  Execute="deferred" Return="ignore" />
+    <InstallExecuteSequence>
+      <Custom Action="RefreshExplorerAssociations" After="WriteRegistryValues">NOT (REMOVE = "ALL")</Custom>
+    </InstallExecuteSequence>
 
     <Property Id="WIXUI_INSTALLDIR" Value="INSTALLFOLDER" />
     <Property Id="ARPNOMODIFY" Value="1" />

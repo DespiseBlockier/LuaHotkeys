@@ -23,8 +23,9 @@ if (!(Test-Path -LiteralPath $runtime -PathType Leaf) -or !(Test-Path -LiteralPa
 
 New-Item -Path $OutputDirectory -ItemType Directory -Force | Out-Null
 $executable = Join-Path $OutputDirectory 'LuaHotkeys.exe'
+$updater = Join-Path $OutputDirectory 'LuaHotkeysUpdater.exe'
 $demo = Join-Path $PSScriptRoot 'example.lua'
-$sources = @('Program.cs', 'LuaWorker.cs', 'WindowsInput.cs', 'LuaEditor.cs', 'FileAssociation.cs') | ForEach-Object { Join-Path $PSScriptRoot $_ }
+$sources = @('Program.cs', 'LuaWorker.cs', 'WindowsInput.cs', 'LuaEditor.cs', 'FileAssociation.cs', 'UpdatePaths.cs') | ForEach-Object { Join-Path $PSScriptRoot $_ }
 $assemblyInfo = [IO.Path]::GetTempFileName()
 try {
     $metadata = @"
@@ -38,6 +39,10 @@ using System.Reflection;
     [IO.File]::WriteAllText($assemblyInfo, $metadata)
     & $compiler /nologo /target:winexe /platform:x86 /optimize+ /codepage:65001 /langversion:5 /r:System.Windows.Forms.dll /r:System.Drawing.dll "/out:$executable" "/resource:$demo,example.lua" $sources $assemblyInfo
     if ($LASTEXITCODE -ne 0) { throw "Build failed with exit code $LASTEXITCODE." }
+    $updateSources = @('UpdaterProgram.cs', 'UpdatePaths.cs', 'GitHubRelease.cs', 'UpdateInstaller.cs', 'PortableUpdate.cs') |
+        ForEach-Object { Join-Path $PSScriptRoot $_ }
+    & $compiler /nologo /target:winexe /platform:x86 /optimize+ /codepage:65001 /langversion:5 /r:System.Windows.Forms.dll /r:System.Drawing.dll /r:System.IO.Compression.dll /r:System.Runtime.Serialization.dll "/out:$updater" $updateSources $assemblyInfo
+    if ($LASTEXITCODE -ne 0) { throw "Updater build failed with exit code $LASTEXITCODE." }
 }
 finally {
     Remove-Item -LiteralPath $assemblyInfo -ErrorAction SilentlyContinue

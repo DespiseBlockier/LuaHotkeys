@@ -33,7 +33,7 @@ try {
 }
 finally {
     if (Test-Path -LiteralPath $stage) {
-        foreach ($file in 'LuaHotkeys.exe', 'lua5.1.dll', 'Lua-LICENSE.txt', 'Installer.wixobj') {
+        foreach ($file in 'LuaHotkeys.exe', 'LuaHotkeysUpdater.exe', 'lua5.1.dll', 'Lua-LICENSE.txt', 'Installer.wixobj') {
             Remove-Item -LiteralPath (Join-Path $stage $file) -ErrorAction SilentlyContinue
         }
         if (!(Get-ChildItem -LiteralPath $stage -Force)) {

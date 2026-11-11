@@ -14,18 +14,29 @@ namespace LuaHotkeys
         [STAThread]
         private static int Main(string[] arguments)
         {
+            if (arguments.Length == 1 && arguments[0] == "--refresh-associations")
+            {
+                FileAssociation.Refresh();
+                return 0;
+            }
+
             WindowsInput.SetProcessDPIAware();
             if (arguments.Length == 1 && arguments[0] == "--worker")
                 return LuaWorker.Run();
 
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
+            if (UpdatePaths.IsUpdating(AppDomain.CurrentDomain.BaseDirectory))
+            {
+                MessageBox.Show("Wait for the LuaHotkeys updater to finish, then open the app again.", "LuaHotkeys");
+                return 1;
+            }
             string script = null;
             bool runInTray = false;
             if (arguments.Length == 1 && !arguments[0].StartsWith("--", StringComparison.Ordinal))
             {
                 script = arguments[0];
-                runInTray = String.Equals(Path.GetExtension(script), FileAssociation.Extension, StringComparison.OrdinalIgnoreCase);
+                runInTray = FileAssociation.IsScriptExtension(Path.GetExtension(script));
             }
             else if (arguments.Length == 2 && (arguments[0] == "--edit" || arguments[0] == "--run"))
             {
@@ -38,14 +49,24 @@ namespace LuaHotkeys
                 return 1;
             }
 
+            string closeEvent;
+            using (var process = Process.GetCurrentProcess())
+                closeEvent = UpdatePaths.CloseEventName(process.Id);
             using (var form = new MainForm())
+            using (var request = new EventWaitHandle(false, EventResetMode.AutoReset, closeEvent))
             {
-                if (script != null && !form.LoadScript(script))
-                    return 1;
-                if (runInTray)
-                    form.RunInTray();
-                else
-                    Application.Run(form);
+                var listener = ThreadPool.RegisterWaitForSingleObject(request, (ignored, timeout) =>
+                    form.CloseForUpdate(), null, Timeout.Infinite, false);
+                try
+                {
+                    if (script != null && !form.LoadScript(script))
+                        return 1;
+                    if (runInTray)
+                        form.RunInTray();
+                    else
+                        Application.Run(form);
+                }
+                finally { listener.Unregister(null); }
             }
             return 0;
         }
@@ -76,7 +97,7 @@ namespace LuaHotkeys
             Font = new Font("Segoe UI", 10F);
             BackColor = Color.FromArgb(243, 246, 251);
             ForeColor = ink;
-            MinimumSize = new Size(700, 475);
+            MinimumSize = new Size(755, 475);
             ClientSize = new Size(860, 600);
             StartPosition = FormStartPosition.CenterScreen;
             AutoScaleMode = AutoScaleMode.Dpi;
@@ -110,7 +131,7 @@ namespace LuaHotkeys
             stopButton = Command("Stop", StopScript, false);
             commands.Controls.AddRange(new Control[]
             {
-                runButton, stopButton, Command("Open…", OpenScript, false),
+                runButton, stopButton, Command("New", NewScript, false), Command("Open…", OpenScript, false),
                 Command("Save", () => SaveScript(), false), Command("Hide to tray", Hide, false),
                 Command("Associate files", AssociateFiles, false)
             });
@@ -187,7 +208,7 @@ namespace LuaHotkeys
             try
             {
                 FileAssociation.Register(Application.ExecutablePath);
-                Append("Double-click a .luahotkeys file to run it, or right-click and choose Edit in LuaHotkeys.");
+                Append("Double-click a script to run it. Right-click for Edit in LuaHotkeys or New → LuaHotkeys Script.");
             }
             catch (Exception error)
             {
@@ -241,7 +262,7 @@ namespace LuaHotkeys
             }
 
             worker = process;
-            string name = path == null ? "Untitled.luahotkeys" : Path.GetFileName(path);
+            string name = path == null ? "Untitled.lhk" : Path.GetFileName(path);
             string source = editor.Text;
             SetStatus("Starting…", true);
             Append("Running " + name);
@@ -390,11 +411,22 @@ namespace LuaHotkeys
             activity.ScrollToCaret();
         }
 
+        private void NewScript()
+        {
+            if (!ConfirmDiscard() || !StopScriptCore())
+                return;
+            path = null;
+            editor.Clear();
+            savedText = editor.Text;
+            UpdateFileLabel();
+            editor.Focus();
+        }
+
         private void OpenScript()
         {
             if (!ConfirmDiscard())
                 return;
-            using (var dialog = new OpenFileDialog { Filter = "LuaHotkeys and Lua scripts (*.luahotkeys;*.lua)|*.luahotkeys;*.lua|All files (*.*)|*.*" })
+            using (var dialog = new OpenFileDialog { Filter = "LuaHotkeys and Lua scripts (*.lhk;*.luahotkeys;*.lua)|*.lhk;*.luahotkeys;*.lua|All files (*.*)|*.*" })
                 if (dialog.ShowDialog(this) == DialogResult.OK)
                     LoadScript(dialog.FileName);
         }
@@ -427,8 +459,8 @@ namespace LuaHotkeys
             {
                 using (var dialog = new SaveFileDialog
                 {
-                    Filter = "LuaHotkeys script (*.luahotkeys)|*.luahotkeys|Lua script (*.lua)|*.lua",
-                    DefaultExt = "luahotkeys", FileName = "hotkeys.luahotkeys"
+                    Filter = "LuaHotkeys script (*.lhk)|*.lhk|LuaHotkeys script (*.luahotkeys)|*.luahotkeys|Lua script (*.lua)|*.lua",
+                    DefaultExt = "lhk", FileName = "hotkeys.lhk"
                 })
                 {
                     if (dialog.ShowDialog(this) != DialogResult.OK)
@@ -463,13 +495,29 @@ namespace LuaHotkeys
 
         private void UpdateFileLabel()
         {
-            string name = path == null ? "Untitled.luahotkeys" : Path.GetFileName(path);
+            string name = path == null ? "Untitled.lhk" : Path.GetFileName(path);
             fileLabel.Text = name + (savedText != null && editor.Text != savedText ? "  •  Unsaved" : String.Empty);
             if (tray != null)
             {
                 string tooltip = "LuaHotkeys · " + name;
                 tray.Text = tooltip.Length > 63 ? tooltip.Substring(0, 60) + "…" : tooltip;
             }
+        }
+
+        internal void CloseForUpdate()
+        {
+            if (!IsHandleCreated)
+                return;
+            try
+            {
+                BeginInvoke(new MethodInvoker(() =>
+                {
+                    if (editor.Text != savedText)
+                        ShowEditor();
+                    Close();
+                }));
+            }
+            catch (InvalidOperationException) { }
         }
 
         private void ShowEditor()
@@ -487,6 +535,7 @@ namespace LuaHotkeys
                 case Keys.F5: RunScript(); return true;
                 case Keys.Shift | Keys.F5: StopScript(); return true;
                 case Keys.Control | Keys.S: SaveScript(); return true;
+                case Keys.Control | Keys.N: NewScript(); return true;
                 case Keys.Control | Keys.O: OpenScript(); return true;
                 default: return base.ProcessCmdKey(ref message, keyData);
             }
