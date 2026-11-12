@@ -166,8 +166,8 @@ impl Page {
         }
     }
 
-    pub fn rtf(self) -> String {
-        let mut page = Document::new();
+    pub fn rtf(self, width: i32) -> String {
+        let mut page = Document::new(width);
         match self {
             Self::Start => {
                 page.title("Getting started");
@@ -222,13 +222,16 @@ fn signature(name: &str) -> String {
     format!("{name}{}", completion::signature(name).unwrap_or("()"))
 }
 
-const CODE_BACKGROUND: u32 = color(29, 40, 58);
+pub(super) const CODE_BACKGROUND: u32 = color(29, 40, 58);
 const SYNTAX_FIRST: usize = 4;
 
-struct Document(String);
+struct Document {
+    rtf: String,
+    width: i32,
+}
 
 impl Document {
-    fn new() -> Self {
+    fn new(width: i32) -> Self {
         let mut rtf = String::from(
             r"{\rtf1\ansi\deff0\uc1{\fonttbl{\f0 Segoe UI;}{\f1 Consolas;}}{\colortbl;",
         );
@@ -245,12 +248,12 @@ impl Document {
             );
         }
         rtf.push('}');
-        Self(rtf)
+        Self { rtf, width }
     }
 
     fn finish(mut self) -> String {
-        self.0.push('}');
-        self.0
+        self.rtf.push('}');
+        self.rtf
     }
 
     fn title(&mut self, text: &str) {
@@ -268,37 +271,42 @@ impl Document {
     fn paragraph_with(&mut self, text: &str, size: u32, color: u32, bold: bool, spacing: u32) {
         let bold = if bold { r"\b" } else { r"\b0" };
         let _ = write!(
-            self.0,
+            self.rtf,
             r"{{\pard\li180\ri180\sa{spacing}\f0\fs{size}\cf{color}{bold} "
         );
-        escaped(&mut self.0, text);
-        self.0.push_str(r"\par}");
+        escaped(&mut self.rtf, text);
+        self.rtf.push_str(r"\par}");
     }
 
     fn argument(&mut self, name: &str, description: &str) {
-        self.0.push_str(r"{\pard\li180\ri180\sa95\f1\fs21\cf1\b ");
-        escaped(&mut self.0, name);
-        self.0.push_str(r" \b0\f0\fs22\cf2  ");
-        escaped(&mut self.0, description);
-        self.0.push_str(r"\par}");
+        self.rtf.push_str(r"{\pard\li180\ri180\sa95\f1\fs21\cf1\b ");
+        escaped(&mut self.rtf, name);
+        self.rtf.push_str(r" \b0\f0\fs22\cf2  ");
+        escaped(&mut self.rtf, description);
+        self.rtf.push_str(r"\par}");
     }
 
     fn code(&mut self, text: &str) {
-        self.0.push_str(r"{\pard\li360\ri360\sb100\sa190\sl320\slmult0\f1\fs21\cf1\shading10000\cfpat3\cbpat3\highlight3 ");
+        // RichEdit uses the cell's right edge in twips to lay out the shaded panel.
+        let edge = (self.width - 180).max(720);
+        let _ = write!(
+            self.rtf,
+            r"{{\trowd\trleft180\trgaph180\clcbpat3\cellx{edge}\pard\intbl\sb120\sa120\sl320\slmult0\f1\fs21\cf1 "
+        );
         let mut end = 0;
         for (start, next, color) in highlight::tokens(text) {
-            escaped(&mut self.0, &text[end..start]);
+            escaped(&mut self.rtf, &text[end..start]);
             let index = highlight::COLORS
                 .iter()
                 .position(|&value| value == color)
                 .map_or(1, |index| index + SYNTAX_FIRST);
-            let _ = write!(self.0, r"\cf{index} ");
-            escaped(&mut self.0, &text[start..next]);
-            self.0.push_str(r"\cf1 ");
+            let _ = write!(self.rtf, r"\cf{index} ");
+            escaped(&mut self.rtf, &text[start..next]);
+            self.rtf.push_str(r"\cf1 ");
             end = next;
         }
-        escaped(&mut self.0, &text[end..]);
-        self.0.push_str(r"\par}");
+        escaped(&mut self.rtf, &text[end..]);
+        self.rtf.push_str(r"\cell\row}{\pard\fs4\sa110\par}");
     }
 }
 
@@ -335,17 +343,17 @@ mod tests {
         for (group, category) in CATEGORIES.iter().enumerate() {
             let page = Page::Category(group);
             assert_eq!(Page::from_id(page.id()), Some(page));
-            let reference = page.rtf();
+            let reference = page.rtf(6000);
             for (index, function) in category.functions.iter().enumerate() {
                 assert!(completion::signature(function.name).is_some());
                 let page = Page::Function(group, index);
                 assert_eq!(Page::from_id(page.id()), Some(page));
                 assert!(reference.contains(function.name));
                 assert!(page.example().is_some());
-                assert!(page.rtf().contains(r"\highlight3"));
+                assert!(page.rtf(6000).contains(r"\clcbpat3\cellx5820"));
             }
         }
-        let timing = Page::Function(3, 0).rtf();
+        let timing = Page::Function(3, 0).rtf(6000);
         assert!(timing.contains(r"\cf9 math"));
         assert!(timing.contains(r"\cf8 floor"));
     }

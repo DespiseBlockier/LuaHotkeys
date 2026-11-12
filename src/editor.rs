@@ -20,8 +20,8 @@ const EM_GETTEXTLENGTHEX: u32 = 0x045f;
 const EM_EXGETSEL: u32 = 0x0434;
 const EM_EXSETSEL: u32 = 0x0437;
 const EM_SETCHARFORMAT: u32 = 0x0444;
-const EM_GETSCROLLPOS: u32 = 0x04dd;
-const EM_SETSCROLLPOS: u32 = 0x04de;
+pub const EM_GETSCROLLPOS: u32 = 0x04dd;
+pub const EM_SETSCROLLPOS: u32 = 0x04de;
 pub const EM_SETBKGNDCOLOR: u32 = 0x0443;
 pub const EM_SETEVENTMASK: u32 = 0x0445;
 
@@ -69,6 +69,15 @@ pub fn text(hwnd: HWND) -> String {
 }
 
 fn read_text(hwnd: HWND) -> String {
+    text_with_flags(hwnd, 0)
+}
+
+#[cfg(test)]
+pub fn raw_text(hwnd: HWND) -> String {
+    text_with_flags(hwnd, 4) // GT_RAWTEXT retains the table delimiters used in selection offsets.
+}
+
+fn text_with_flags(hwnd: HWND, flags: u32) -> String {
     // Rich Edit returns one UTF-16 code unit for each native line break without GT_USECRLF.
     let length = TextLength {
         flags: 2 | 8,
@@ -81,7 +90,7 @@ fn read_text(hwnd: HWND) -> String {
     let mut buffer = vec![0_u16; units as usize + 1];
     let request = TextRequest {
         bytes: (buffer.len() * 2) as u32,
-        flags: 0,
+        flags,
         code_page: 1200,
         default_character: null_mut(),
         used_default: null_mut(),
