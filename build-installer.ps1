@@ -25,7 +25,7 @@ try {
     New-Item -Path $OutputDirectory -ItemType Directory -Force | Out-Null
     $msi = Join-Path $OutputDirectory "LuaHotkeys-$Version-x86.msi"
 
-    & $candle -nologo -arch x86 "-dProductVersion=$Version" "-dAppDirectory=$stage" -out $wixObject $manifest
+    & $candle -nologo -arch x86 "-dProductVersion=$Version" "-dAppDirectory=$stage" "-dProjectDirectory=$PSScriptRoot" -out $wixObject $manifest
     if ($LASTEXITCODE -ne 0) { throw "WiX compile failed with exit code $LASTEXITCODE." }
     & $light -nologo -ext $uiLibrary -cultures:en-us -spdb -out $msi $wixObject
     if ($LASTEXITCODE -ne 0) { throw "WiX link failed with exit code $LASTEXITCODE." }

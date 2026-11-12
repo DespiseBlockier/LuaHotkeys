@@ -4,6 +4,8 @@
            Manufacturer="LuaHotkeys" UpgradeCode="{54B8D0E7-0923-46B0-8694-7F3280300F48}">
     <Package InstallerVersion="500" Compressed="yes" InstallScope="perUser" InstallPrivileges="limited" />
     <MediaTemplate EmbedCab="yes" />
+    <Icon Id="LuaHotkeys.ico" SourceFile="$(var.ProjectDirectory)\assets\LuaHotkeys.ico" />
+    <Property Id="ARPPRODUCTICON" Value="LuaHotkeys.ico" />
     <MajorUpgrade Schedule="afterInstallInitialize" AllowSameVersionUpgrades="yes"
                   DowngradeErrorMessage="A newer version of LuaHotkeys is already installed." />
 

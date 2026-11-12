@@ -1,6 +1,6 @@
 # LuaHotkeys
 
-A Windows automation app for writing global hotkeys and macros in Lua 5.1.5. It includes a syntax-colored editor, a system tray control, and an activity log for script output and errors.
+A native Windows automation app written in Rust for global hotkeys and macros in Lua 5.1.5. It includes a syntax-colored editor, a system tray control, and an activity log for script output and errors.
 
 ## Quick start
 
@@ -61,6 +61,8 @@ Key names are case-insensitive. Modifiers include `Ctrl`, `Alt`, `Shift`, and `W
 
 ## Build from source
 
-On Windows, run `.\build.ps1` in PowerShell. The script uses the Windows .NET Framework C# compiler and the 32-bit Lua for Windows 5.1 runtime. Set `LUA51_DIR` to the folder containing `lua5.1.dll` and its `LICENSE.txt` if Lua is installed elsewhere. The executable, Lua DLL, and Lua license are placed in `dist`.
+Install Rust, the MSVC C++ build tools, and the Windows SDK. Add the 32-bit Windows target with `rustup target add i686-pc-windows-msvc`.
 
-Build the MSI with [WiX Toolset 3.14.1](https://github.com/wixtoolset/wix3/releases/tag/wix3141rtm). Put its tools on PATH or set WIX_BIN to the folder containing candle.exe and light.exe, then run .\build-release.ps1. It uses the version in VERSION and builds both the MSI and the portable ZIP in dist. Include both files in each release so both update paths are available.
+The build links the Lua 5.1 import library from Lua for Windows. Set `LUA51_DIR` if the directory containing `lua5.1.dll`, `lib\lua5.1.lib`, and `LICENSE.txt` is outside the default location. Run `.\build.ps1` to build the app and updater in `dist`.
+
+Build the release packages with [WiX Toolset 3.14.1](https://github.com/wixtoolset/wix3/releases/tag/wix3141rtm). Put its tools on PATH or set `WIX_BIN` to the folder containing `candle.exe` and `light.exe`, then run `.\build-release.ps1`. It uses the version in `VERSION` and writes both the MSI and the portable ZIP to `dist`. Include both files in each release so both update paths are available.
