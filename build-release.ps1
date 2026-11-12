@@ -8,7 +8,7 @@ $ErrorActionPreference = 'Stop'
 $stage = Join-Path ([IO.Path]::GetTempPath()) ('luahotkeys-release-' + [Guid]::NewGuid().ToString('N'))
 $programFiles = @('LuaHotkeys.exe', 'LuaHotkeysUpdater.exe', 'lua5.1.dll', 'Lua-LICENSE.txt')
 $guides = Join-Path $stage 'packaging'
-$guideFiles = @('Gui.md', 'Linux.md', 'macro-gui.lhk')
+$guideFiles = @('Gui.md', 'Linux.md', 'macro-gui.lhk', 'imgui-demo.lhk')
 try {
     & (Join-Path $PSScriptRoot 'build.ps1') -Version $Version -OutputDirectory $stage | Out-Null
     $Version = ([version]$Version).ToString(3)

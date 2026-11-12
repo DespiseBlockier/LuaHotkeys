@@ -4,7 +4,9 @@ use std::{
     rc::{Rc, Weak},
 };
 
-use mlua::{Error, Function, Lua, RegistryKey, UserData, UserDataFields, UserDataMethods, Value};
+use mlua::{
+    Error, Function, Lua, RegistryKey, Table, UserData, UserDataFields, UserDataMethods, Value,
+};
 
 use crate::{
     runtime::{integer, strict_text, Output},
@@ -12,6 +14,7 @@ use crate::{
 };
 
 pub mod immediate;
+mod panels;
 #[cfg(target_os = "linux")]
 pub mod tk;
 #[cfg(windows)]
@@ -31,6 +34,17 @@ pub enum Kind {
     Toggle,
     Input,
     Keybind,
+    Tab,
+    Folder,
+    Dock,
+    Dropdown,
+    Color,
+}
+
+impl Kind {
+    fn is_group(self) -> bool {
+        matches!(self, Self::Tab | Self::Folder | Self::Dock)
+    }
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -39,6 +53,7 @@ pub enum ControlValue {
     Text(String),
     Number(i32),
     Boolean(bool),
+    Color(u32),
 }
 
 impl ControlValue {
@@ -48,6 +63,7 @@ impl ControlValue {
             Self::Text(text) => Value::String(lua.create_string(text)?),
             Self::Number(value) => Value::Integer((*value).into()),
             Self::Boolean(value) => Value::Boolean(*value),
+            Self::Color(rgb) => Value::String(lua.create_string(format!("#{rgb:06X}"))?),
         })
     }
 }
@@ -57,6 +73,11 @@ pub struct Control {
     pub kind: Kind,
     pub value: ControlValue,
     pub hovered: bool,
+    pub parent: Option<usize>,
+    pub children: Vec<usize>,
+    pub options: Vec<String>,
+    pub tint: Option<u32>,
+    pub removed: bool,
 }
 
 impl Control {
@@ -77,21 +98,37 @@ pub struct Window {
     pub controls: Vec<Control>,
     pub recording: Option<usize>,
     pub appearance: Appearance,
+    pub collapsed: bool,
+    pub active_tab: Option<usize>,
+    pub position: Option<(i32, i32)>,
     engine: Engine,
 }
 
-#[derive(Default)]
 pub struct Appearance {
     pub width: Option<u32>,
     pub height: Option<u32>,
     pub theme: Theme,
+    pub animation_ms: u32,
+}
+
+impl Default for Appearance {
+    fn default() -> Self {
+        Self {
+            width: None,
+            height: None,
+            theme: Theme::default(),
+            animation_ms: 100,
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
 pub struct Theme {
     pub header: [f32; 4],
     pub background: [f32; 4],
+    pub tabs: [f32; 4],
     pub control: [f32; 4],
+    pub dropdown: [f32; 4],
     pub accent: [f32; 4],
     pub text: [f32; 4],
     pub rounding: f32,
@@ -100,19 +137,47 @@ pub struct Theme {
 impl Default for Theme {
     fn default() -> Self {
         Self {
-            header: [0.13, 0.18, 0.26, 1.0],
-            background: [0.08, 0.11, 0.16, 1.0],
-            control: [0.17, 0.23, 0.32, 1.0],
-            accent: [0.43, 0.68, 1.0, 1.0],
-            text: [0.93, 0.96, 1.0, 1.0],
-            rounding: 12.0,
+            header: rgba(0xFF85A2),
+            background: rgba(0x362434),
+            tabs: rgba(0x5A3250),
+            control: rgba(0xFF85A2),
+            dropdown: rgba(0x7C3546),
+            accent: rgba(0xFFB5C7),
+            text: rgba(0xFFFFFF),
+            rounding: 5.0,
         }
     }
 }
 
-fn window_options(value: Value, engine: Engine) -> mlua::Result<(bool, Appearance)> {
+pub(super) fn rgba(rgb: u32) -> [f32; 4] {
+    [
+        ((rgb >> 16) & 0xff) as f32 / 255.0,
+        ((rgb >> 8) & 0xff) as f32 / 255.0,
+        (rgb & 0xff) as f32 / 255.0,
+        1.0,
+    ]
+}
+
+type WindowOptions = (bool, bool, Option<(i32, i32)>, Appearance);
+
+fn rgb(value: Value) -> mlua::Result<u32> {
+    let value = strict_text(value)?;
+    let value = value.to_str()?;
+    value
+        .strip_prefix('#')
+        .filter(|digits| digits.len() == 6 && digits.bytes().all(|byte| byte.is_ascii_hexdigit()))
+        .and_then(|digits| u32::from_str_radix(digits, 16).ok())
+        .ok_or_else(|| Error::runtime("Expected a color like #20304A."))
+}
+
+fn window_options(value: Value, engine: Engine) -> mlua::Result<WindowOptions> {
     let Value::Table(options) = value else {
-        return Ok((optional_bool(value, true)?, Appearance::default()));
+        return Ok((
+            optional_bool(value, true)?,
+            false,
+            None,
+            Appearance::default(),
+        ));
     };
     if engine != Engine::Imgui {
         return Err(Error::runtime(
@@ -141,26 +206,13 @@ fn window_options(value: Value, engine: Engine) -> mlua::Result<(bool, Appearanc
                 if value.is_nil() {
                     return Ok(default);
                 }
-                let value = strict_text(value)?;
-                let value = value.to_str()?;
-                let digits = value.strip_prefix('#').filter(|hex| {
-                    hex.len() == 6 && hex.bytes().all(|byte| byte.is_ascii_hexdigit())
-                });
-                let rgb = digits
-                    .and_then(|hex| u32::from_str_radix(hex, 16).ok())
-                    .ok_or_else(|| {
-                        Error::runtime(format!("Theme {name} must be a color like #20304A."))
-                    })?;
-                Ok([
-                    ((rgb >> 16) & 0xff) as f32 / 255.0,
-                    ((rgb >> 8) & 0xff) as f32 / 255.0,
-                    (rgb & 0xff) as f32 / 255.0,
-                    1.0,
-                ])
+                Ok(rgba(rgb(value)?))
             };
             theme.header = color("header", theme.header)?;
             theme.background = color("background", theme.background)?;
+            theme.tabs = color("tabs", theme.tabs)?;
             theme.control = color("control", theme.control)?;
+            theme.dropdown = color("dropdown", theme.dropdown)?;
             theme.accent = color("accent", theme.accent)?;
             theme.text = color("text", theme.text)?;
             let rounding: Value = colors.raw_get("rounding")?;
@@ -174,12 +226,33 @@ fn window_options(value: Value, engine: Engine) -> mlua::Result<(bool, Appearanc
         }
         _ => return Err(Error::runtime("Theme options must be a table.")),
     }
+    let animation: Value = options.raw_get("animation")?;
+    let animation_ms = if animation.is_nil() {
+        100
+    } else {
+        integer(animation)?
+    };
+    if !(0..=2000).contains(&animation_ms) {
+        return Err(Error::runtime(
+            "Window animation must be between 0 and 2000 milliseconds.",
+        ));
+    }
+    let x: Value = options.raw_get("x")?;
+    let y: Value = options.raw_get("y")?;
+    let position = if x.is_nil() && y.is_nil() {
+        None
+    } else {
+        Some((integer(x)?, integer(y)?))
+    };
     Ok((
         optional_bool(options.raw_get("visible")?, true)?,
+        optional_bool(options.raw_get("collapsed")?, false)?,
+        position,
         Appearance {
             width: dimension("width", 240)?,
             height: dimension("height", 130)?,
             theme,
+            animation_ms: animation_ms as u32,
         },
     ))
 }
@@ -191,12 +264,15 @@ pub enum Event {
     Record(usize),
     CancelRecording(usize),
     Key(usize, Combination),
+    Collapse(bool),
+    SelectTab(usize),
     Close,
 }
 
 pub enum Update {
     Visibility(bool),
     Control(usize),
+    Position(i32, i32),
     Close,
 }
 
@@ -225,7 +301,8 @@ impl Signal {
 struct State {
     window: Option<Window>,
     running: bool,
-    callbacks: HashMap<Signal, Vec<RegistryKey>>,
+    callbacks: HashMap<Signal, Vec<(usize, RegistryKey)>>,
+    next_connection: usize,
     signals: VecDeque<(Signal, ControlValue)>,
     updates: VecDeque<Update>,
 }
@@ -237,15 +314,29 @@ impl State {
 
     fn change(&mut self, id: usize, value: ControlValue, update: bool) {
         let window = self.window_mut();
+        let native = window.engine == Engine::Basic;
         let control = &mut window.controls[id];
-        if window.closed || control.value == value {
+        if window.closed || control.removed || control.value == value {
             return;
         }
+        let kind = control.kind;
         control.value = value.clone();
-        if control.kind != Kind::Label {
+        if kind == Kind::Folder && value == ControlValue::Boolean(false) {
+            let mut ancestor = window
+                .recording
+                .and_then(|recorder| window.controls[recorder].parent);
+            while let Some(parent) = ancestor {
+                if parent == id {
+                    self.cancel_recording();
+                    break;
+                }
+                ancestor = window.controls[parent].parent;
+            }
+        }
+        if kind != Kind::Label {
             self.signals.push_back((Signal::Changed(id), value));
         }
-        if update {
+        if update && native {
             self.updates.push_back(Update::Control(id));
         }
     }
@@ -289,6 +380,24 @@ impl State {
     fn cancel_recording(&mut self) {
         if let Some(id) = self.window_mut().recording.take() {
             self.updates.push_back(Update::Control(id));
+        }
+    }
+
+    fn collapse(&mut self, collapsed: bool) {
+        let window = self.window_mut();
+        if window.collapsed != collapsed {
+            window.collapsed = collapsed;
+            self.clear_hover();
+            self.cancel_recording();
+        }
+    }
+
+    fn select_tab(&mut self, id: usize) {
+        let window = self.window_mut();
+        if window.active_tab != Some(id) {
+            window.active_tab = Some(id);
+            self.clear_hover();
+            self.cancel_recording();
         }
     }
 
@@ -360,10 +469,11 @@ impl Gui {
         let Some(window) = state.window.as_ref().filter(|window| !window.closed) else {
             return;
         };
-        let kind = |id| {
+        let kind = |id: usize| {
             window
                 .controls
                 .get(id)
+                .filter(|control| !control.removed)
                 .map(|control: &Control| control.kind)
         };
         match event {
@@ -380,8 +490,18 @@ impl Gui {
                     }
                 }
             }
-            Event::Change(id, ControlValue::Boolean(value)) if kind(id) == Some(Kind::Toggle) => {
+            Event::Change(id, ControlValue::Boolean(value))
+                if matches!(kind(id), Some(Kind::Toggle | Kind::Folder)) =>
+            {
                 state.change(id, ControlValue::Boolean(value), false);
+            }
+            Event::Change(id, ControlValue::Color(value)) if kind(id) == Some(Kind::Color) => {
+                state.change(id, ControlValue::Color(value), false);
+            }
+            Event::Change(id, ControlValue::Text(value)) if kind(id) == Some(Kind::Dropdown) => {
+                if window.controls[id].options.contains(&value) {
+                    state.change(id, ControlValue::Text(value), false);
+                }
             }
             Event::Change(id, ControlValue::Text(value)) if kind(id) == Some(Kind::Input) => {
                 let normalized = value.contains(['\0', '\r', '\n']);
@@ -410,6 +530,8 @@ impl Gui {
                 state.record_key(combo);
             }
             Event::Close => state.close(),
+            Event::Collapse(value) if window.engine == Engine::Imgui => state.collapse(value),
+            Event::SelectTab(id) if kind(id) == Some(Kind::Tab) => state.select_tab(id),
             _ => {}
         }
     }
@@ -426,9 +548,21 @@ impl Gui {
                 .get(&signal)
                 .into_iter()
                 .flatten()
-                .map(|key| lua.registry_value::<Function>(key))
+                .map(|(id, _)| *id)
                 .collect::<Vec<_>>();
-            for callback in callbacks {
+            for id in callbacks {
+                let callback = self
+                    .0
+                    .borrow()
+                    .callbacks
+                    .get(&signal)
+                    .and_then(|callbacks| {
+                        callbacks
+                            .iter()
+                            .find(|(candidate, _)| *candidate == id)
+                            .map(|(_, key)| lua.registry_value::<Function>(key))
+                    });
+                let Some(callback) = callback else { continue };
                 let result = callback.and_then(|callback| match signal {
                     Signal::Changed(_) => callback.call::<()>(value.to_lua(lua)?),
                     _ => callback.call::<()>(()),
@@ -473,15 +607,16 @@ fn optional_bool(value: Value, default: bool) -> mlua::Result<bool> {
 }
 
 struct EngineHandle(StateHandle, Engine);
-struct WindowHandle(StateHandle);
+struct WindowHandle(panels::Panel);
 struct ControlHandle(StateHandle, usize);
 struct SignalHandle(StateHandle, Signal);
+struct ConnectionHandle(StateHandle, Signal, usize);
 
 impl UserData for EngineHandle {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         methods.add_method("window", |_, this, (title, options): (Value, Value)| {
             let title = text(title)?;
-            let (visible, appearance) = window_options(options, this.1)?;
+            let (visible, collapsed, position, appearance) = window_options(options, this.1)?;
             let state = state(&this.0)?;
             let mut state = state.borrow_mut();
             if state.running || state.window.is_some() {
@@ -496,35 +631,19 @@ impl UserData for EngineHandle {
                 controls: Vec::new(),
                 recording: None,
                 appearance,
+                collapsed,
+                active_tab: None,
+                position,
                 engine: this.1,
             });
-            Ok(WindowHandle(this.0.clone()))
+            Ok(WindowHandle(panels::Panel(this.0.clone(), None)))
         });
     }
 }
 
 impl WindowHandle {
-    fn add(&self, label: String, kind: Kind, value: ControlValue) -> mlua::Result<ControlHandle> {
-        let state = state(&self.0)?;
-        let mut state = state.borrow_mut();
-        if state.running || state.window_mut().closed {
-            return Err(Error::runtime(
-                "Declare GUI controls before the script starts listening.",
-            ));
-        }
-        let controls = &mut state.window_mut().controls;
-        let id = controls.len();
-        controls.push(Control {
-            label,
-            kind,
-            value,
-            hovered: false,
-        });
-        Ok(ControlHandle(self.0.clone(), id))
-    }
-
     fn visibility(&self, visible: bool) -> mlua::Result<()> {
-        let state = state(&self.0)?;
+        let state = state(&self.0 .0)?;
         let mut state = state.borrow_mut();
         let window = state.window_mut();
         if window.closed {
@@ -545,61 +664,47 @@ impl WindowHandle {
 impl UserData for WindowHandle {
     fn add_fields<F: UserDataFields<Self>>(fields: &mut F) {
         fields.add_field_method_get("closed", |_, this| {
-            Ok(SignalHandle(this.0.clone(), Signal::Closed))
+            Ok(SignalHandle(this.0 .0.clone(), Signal::Closed))
         });
     }
 
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
-        methods.add_method("label", |_, this, value: Value| {
-            this.add(String::new(), Kind::Label, ControlValue::Text(text(value)?))
+        panels::add_methods(methods, |this: &Self| this.0.clone());
+        methods.add_method("tab", |_, this, name: Value| {
+            this.0.group(text(name)?, Kind::Tab, ControlValue::None)
         });
-        methods.add_method("button", |_, this, label: Value| {
-            this.add(text(label)?, Kind::Button, ControlValue::None)
+        for (name, collapsed) in [("collapse", true), ("expand", false)] {
+            methods.add_method(name, move |_, this, ()| {
+                let state = state(&this.0 .0)?;
+                let mut state = state.borrow_mut();
+                panels::require_imgui(state.window_mut())?;
+                state.collapse(collapsed);
+                Ok(())
+            });
+        }
+        methods.add_method("is_collapsed", |_, this, ()| {
+            let state = state(&this.0 .0)?;
+            let state = state.borrow();
+            let window = state.window.as_ref().expect("window handle");
+            panels::require_imgui(window)?;
+            Ok(window.collapsed)
         });
-        methods.add_method(
-            "slider",
-            |_, this, (label, min, max, initial): (Value, Value, Value, Value)| {
-                let min = integer(min)?;
-                let max = integer(max)?;
-                if min >= max || max.checked_sub(min).is_none() {
-                    return Err(Error::runtime(
-                        "A slider requires min < max and a 32-bit range.",
-                    ));
-                }
-                let value = if initial.is_nil() {
-                    min
-                } else {
-                    slider_value(initial, min, max)?
-                };
-                this.add(
-                    text(label)?,
-                    Kind::Slider { min, max },
-                    ControlValue::Number(value),
-                )
-            },
-        );
-        methods.add_method("toggle", |_, this, (label, initial): (Value, Value)| {
-            this.add(
-                text(label)?,
-                Kind::Toggle,
-                ControlValue::Boolean(optional_bool(initial, false)?),
-            )
-        });
-        methods.add_method("input", |_, this, (label, initial): (Value, Value)| {
-            let initial = if initial.is_nil() {
-                String::new()
-            } else {
-                text(initial)?
-            };
-            this.add(text(label)?, Kind::Input, ControlValue::Text(initial))
-        });
-        methods.add_method("keybind", |_, this, (label, initial): (Value, Value)| {
-            this.add(text(label)?, Kind::Keybind, keybind_value(initial)?)
+        methods.add_method("set_position", |_, this, (x, y): (Value, Value)| {
+            let (x, y) = (integer(x)?, integer(y)?);
+            let state = state(&this.0 .0)?;
+            let mut state = state.borrow_mut();
+            let window = state.window_mut();
+            panels::require_imgui(window)?;
+            window.position = Some((x, y));
+            if state.running {
+                state.updates.push_back(Update::Position(x, y));
+            }
+            Ok(())
         });
         methods.add_method("show", |_, this, ()| this.visibility(true));
         methods.add_method("hide", |_, this, ()| this.visibility(false));
         methods.add_method("close", |_, this, ()| {
-            state(&this.0)?.borrow_mut().close();
+            state(&this.0 .0)?.borrow_mut().close();
             Ok(())
         });
     }
@@ -625,14 +730,30 @@ fn keybind_value(value: Value) -> mlua::Result<ControlValue> {
 }
 
 impl ControlHandle {
+    fn control<'a>(&self, window: &'a Window) -> mlua::Result<&'a Control> {
+        window
+            .controls
+            .get(self.1)
+            .filter(|control| !control.removed)
+            .ok_or_else(|| Error::runtime("This GUI control was destroyed."))
+    }
+
     fn signal(&self, signal: Signal) -> mlua::Result<SignalHandle> {
         let state = state(&self.0)?;
         let state = state.borrow();
-        let kind = state.window.as_ref().expect("control handle").controls[self.1].kind;
+        let kind = self
+            .control(state.window.as_ref().expect("control handle"))?
+            .kind;
         let available = match signal {
             Signal::Changed(_) => matches!(
                 kind,
-                Kind::Slider { .. } | Kind::Toggle | Kind::Input | Kind::Keybind
+                Kind::Slider { .. }
+                    | Kind::Toggle
+                    | Kind::Input
+                    | Kind::Keybind
+                    | Kind::Dropdown
+                    | Kind::Color
+                    | Kind::Folder
             ),
             _ => kind == Kind::Button,
         };
@@ -657,7 +778,7 @@ impl UserData for ControlHandle {
         methods.add_method("get", |lua, this, ()| {
             let state = state(&this.0)?;
             let state = state.borrow();
-            state.window.as_ref().expect("control handle").controls[this.1]
+            this.control(state.window.as_ref().expect("control handle"))?
                 .value
                 .to_lua(lua)
         });
@@ -668,16 +789,23 @@ impl UserData for ControlHandle {
             if window.closed {
                 return Err(Error::runtime("This GUI window is closed."));
             }
-            let value = match window.controls[this.1].kind {
+            let control = this.control(window)?;
+            let value = match control.kind {
                 Kind::Button => return Err(Error::runtime("A button has no editable value.")),
                 Kind::Label | Kind::Input => ControlValue::Text(text(value)?),
-                Kind::Toggle => ControlValue::Boolean(boolean(value)?),
+                Kind::Toggle | Kind::Folder => ControlValue::Boolean(boolean(value)?),
                 Kind::Keybind => keybind_value(value)?,
                 Kind::Slider { min, max } => ControlValue::Number(slider_value(value, min, max)?),
+                Kind::Color => ControlValue::Color(rgb(value)?),
+                Kind::Dropdown => panels::selection(&control.options, value)?,
+                Kind::Tab | Kind::Dock => {
+                    return Err(Error::runtime("This GUI group has no editable value."))
+                }
             };
             state.change(this.1, value, true);
             Ok(())
         });
+        panels::control_methods(methods);
     }
 }
 
@@ -685,12 +813,24 @@ impl UserData for SignalHandle {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         methods.add_method("connect", |lua, this, callback: Function| {
             let key = lua.create_registry_value(callback)?;
-            state(&this.0)?
-                .borrow_mut()
-                .callbacks
-                .entry(this.1)
-                .or_default()
-                .push(key);
+            let state = state(&this.0)?;
+            let mut state = state.borrow_mut();
+            let id = state.next_connection;
+            state.next_connection += 1;
+            state.callbacks.entry(this.1).or_default().push((id, key));
+            Ok(ConnectionHandle(this.0.clone(), this.1, id))
+        });
+    }
+}
+
+impl UserData for ConnectionHandle {
+    fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
+        methods.add_method("disconnect", |_, this, ()| {
+            if let Some(state) = this.0.upgrade() {
+                if let Some(callbacks) = state.borrow_mut().callbacks.get_mut(&this.1) {
+                    callbacks.retain(|(id, _)| *id != this.2);
+                }
+            }
             Ok(())
         });
     }
@@ -699,6 +839,70 @@ impl UserData for SignalHandle {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn imgui_panels_keep_values_when_collapsed_and_allow_live_updates() {
+        let lua = Lua::new();
+        let gui = Gui::default();
+        gui.install(&lua).unwrap();
+        lua.load(
+            r##"
+            window = defineGui("Imgui"):window("MainPink", { collapsed = true, animation = 0 })
+            assert(window:is_collapsed())
+            window:expand()
+            assert(not window:is_collapsed())
+            tab = window:tab("Main")
+            other = window:tab("Other")
+            folder = tab:folder("Advanced", true)
+            menu = folder:dropdown("Mode", {"First", "Second"}, "First")
+            picker = folder:color("Accent", "#ffeedd")
+            assert(picker:get() == "#FFEEDD")
+            trace = {}
+            local first
+            first = menu.changed:connect(function(name)
+                table.insert(trace, name or "cleared")
+                first:disconnect()
+            end)
+            menu.changed:connect(function(name) table.insert(trace, name or "empty") end)
+            window:collapse()
+            assert(menu:get() == "First" and folder:get())
+        "##,
+        )
+        .exec()
+        .unwrap();
+        gui.start();
+        lua.load(
+            r##"
+            other:select()
+            local live = tab:dock():button("Live")
+            live:set_color("#f0e0d0")
+            assert(live:get_color() == "#F0E0D0")
+            menu:remove_option("First")
+            menu:add_option("Third")
+            menu:set("Third")
+            assert(menu:get() == "Third")
+        "##,
+        )
+        .exec()
+        .unwrap();
+        assert_eq!(gui.window().as_ref().unwrap().active_tab, Some(1));
+        gui.dispatch(&lua, |kind, message| assert_ne!(kind, 'E', "{message}"));
+        lua.load(
+            r#"
+            assert(table.concat(trace, ",") == "cleared,empty,Third")
+            folder:destroy()
+            assert(not pcall(function() return picker:get() end))
+            other:destroy()
+            window:expand()
+        "#,
+        )
+        .exec()
+        .unwrap();
+        let window = gui.window();
+        let window = window.as_ref().unwrap();
+        assert!(!window.collapsed);
+        assert_eq!(window.active_tab, Some(0));
+    }
 
     #[test]
     fn imgui_window_options_preserve_fixed_size_and_theme() {

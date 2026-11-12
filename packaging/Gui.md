@@ -33,7 +33,7 @@ On Windows, open an `.lhk` script in the editor and click **Run**, or open the s
 
 ## Size and theme an Imgui window
 
-The Imgui window uses a draggable title bar with one minimize button. Set its fixed size and colors when you create it. The Basic engine uses the system's window decorations.
+The Imgui window uses a compact pink header, plum background, and Merriweather type. Click the chevron on the left to collapse the window to its header. Click it again to restore the content and any selected tab. Drag the title to move the window. The Basic engine uses the system's window decorations.
 
 ```lua
 local engine = defineGui("Imgui")
@@ -54,11 +54,16 @@ window:label("Ready")
 
 | Option | What it changes |
 | --- | --- |
-| `width`, `height` | Fixed size in logical pixels. Width accepts 240–4096 and height accepts 130–4096. |
+| `width`, `height` | Expanded size in logical pixels. Width accepts 240–4096 and height accepts 130–4096. Defaults to 300 by 222. |
 | `visible` | Set to `false` to open the window later with `show()`. |
+| `collapsed` | Set to `true` to start with only the 22-pixel header visible. |
+| `animation` | Collapse and expand duration in milliseconds, from 0 to 2000. The default is 100. |
+| `x`, `y` | Initial position in logical desktop pixels. Provide both coordinates. |
 | `theme.header` | Color of the title bar. |
 | `theme.background` | Color behind the controls. |
+| `theme.tabs` | Color of the strip behind tab names. |
 | `theme.control` | Fill color of buttons, sliders, and text fields. |
+| `theme.dropdown` | Fill color of dropdowns. |
 | `theme.accent` | Color of checkmarks, slider handles, keyboard focus, and active states. |
 | `theme.text` | Color of the title, labels, and control text. |
 | `theme.rounding` | Corner radius from 0 to 32 logical pixels. |
@@ -67,7 +72,7 @@ Colors use `#RRGGBB`. Omit any option to use the default. Completion suggests `"
 
 ## Window and control reference
 
-Declare one window and its controls at the top level of the script. Controls appear from top to bottom in the order you create them.
+Declare one window at the top level of the script. Basic controls are declared at startup. Imgui controls can also be added or removed from callbacks. Controls appear in the order you create them.
 
 | Call | Arguments and result |
 | --- | --- |
@@ -81,6 +86,9 @@ Declare one window and its controls at the top level of the script. Controls app
 | `window:show()` | Shows a hidden window. |
 | `window:hide()` | Hides the window and keeps its controls and values available. A hotkey can show it again. |
 | `window:close()` | Closes the window permanently and emits `closed` once. |
+| `window:collapse()`, `window:expand()` | Collapse to the header or restore the contents. Imgui only. |
+| `window:is_collapsed()` | Returns whether the Imgui panel is collapsed. |
+| `window:set_position(x, y)` | Moves the Imgui window to logical desktop coordinates. |
 
 Sliders, toggles, text fields, and keybind pickers have `get()` and `set(value)` methods. A slider accepts a number within its range, a toggle accepts a boolean, and a text field accepts a string. Labels and text fields take single-line text. A picker accepts a `Combo` string or `nil` to clear it.
 
@@ -97,9 +105,14 @@ Connect a Lua function with `signal:connect(function)`. You can connect more tha
 | `toggle.changed` | The checked state changes | New boolean |
 | `input.changed` | The text changes as the user edits it | New string |
 | `keybind.changed` | The picker records a different combo, or the script changes its value | New `Combo` string or `nil` |
-| `window.closed` | The window closes through its title bar or `window:close()` | None |
+| `dropdown.changed` | A different item is selected, or the selection is cleared | Item name or `nil` |
+| `color.changed` | The selected color changes | Uppercase `#RRGGBB` string |
+| `folder.changed` | The folder opens or closes | New boolean |
+| `window.closed` | The Basic title bar closes the window, or the script calls `window:close()` | None |
 
 Calling `set` also fires `changed` when the value differs. Starting values and repeated assignments of the same value produce no event. The callback argument is the value that triggered the signal. `get()` reads the control's current value.
+
+`signal:connect(callback)` returns a connection. Call `connection:disconnect()` to stop receiving the signal.
 
 ```lua
 local window = gui:window("Delay")
@@ -115,6 +128,39 @@ reset.pressed:connect(function()
     delay:set(250)
 end)
 ```
+
+## Imgui tabs, folders, and pickers
+
+A tab, folder, or dock accepts the same control constructors as the window. Add tabs to the window with `window:tab(name)`. The first tab starts selected, and `tab:select()` selects another one from Lua. Controls added directly to the window stay visible above the selected tab's controls.
+
+| Call | What it adds |
+| --- | --- |
+| `panel:folder(label, open?)` | A collapsible group. Use `get()`, `set(boolean)`, or `switch()` to read or change its state. |
+| `panel:dock()` | A row that puts its controls side by side. |
+| `panel:dropdown(label, items, initial?)` | A dropdown with case-insensitive search. Pass an array of unique names and an optional starting selection. |
+| `panel:color(label, initial?)` | A color picker whose value is a `#RRGGBB` string. |
+
+Use `dropdown:add_option(name)` and `dropdown:remove_option(name)` to update the list. Removing the selected item clears the selection and emits `changed(nil)`. Call `dropdown:set(nil)` to clear it while keeping the option. `control:set_color("#FF85A2")` sets a control's display color. `set_color(nil)` restores its theme color. For a color picker, `get()` and `set(color)` read and set the selected color. `control:destroy()` removes a control, including all children of a group.
+
+```lua
+local window = defineGui("Imgui"):window("Settings")
+local tab = window:tab("General")
+local folder = tab:folder("Actions", true)
+local row = folder:dock()
+local apply = row:button("Apply")
+local reset = row:button("Reset")
+local mode = tab:dropdown("Mode", {"Type", "Press", "Preview"}, "Type")
+local color = tab:color("Button color", "#FF85A2")
+
+color.changed:connect(function(value)
+    apply:set_color(value)
+    reset:set_color(value)
+end)
+apply.pressed:connect(function() log(mode:get()) end)
+reset.pressed:connect(function() mode:set("Type") end)
+```
+
+Run [imgui-demo.lhk](imgui-demo.lhk) to try the MainPink-style window and its controls.
 
 ## Record the keys a macro sends
 
@@ -133,7 +179,7 @@ end)
 
 hotkey(trigger, function()
     local combo = outgoing:get()
-    if combo and combo `= trigger then
+    if combo and combo ~= trigger then
         press(combo)
     end
 end)

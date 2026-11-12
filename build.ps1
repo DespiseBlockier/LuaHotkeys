@@ -106,6 +106,10 @@ if (Test-Path -LiteralPath $rustc) {
         }
     }
 }
+$fontLicense = Join-Path $PSScriptRoot 'src/macro_gui/immediate/Merriweather-OFL.txt'
+[void]$notices.AppendLine()
+[void]$notices.AppendLine('Merriweather Regular (SIL Open Font License 1.1)')
+[void]$notices.AppendLine([IO.File]::ReadAllText($fontLicense))
 $noticePath = Join-Path $OutputDirectory 'Lua-LICENSE.txt'
 [IO.File]::WriteAllText($noticePath, $notices.ToString(), (New-Object System.Text.UTF8Encoding($false)))
 Write-Output $executable

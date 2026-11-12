@@ -84,6 +84,7 @@ impl TkWindow {
                 "lhk::add keybind {id} {}",
                 encode(&control.keybind_caption(false))
             ),
+            _ => unreachable!("Imgui-only control"),
         }
     }
 
@@ -155,6 +156,7 @@ impl TkWindow {
         for update in updates {
             match update {
                 Update::Close => break,
+                Update::Position(_, _) => unreachable!("Imgui-only position"),
                 Update::Visibility(visible) => self.visible(visible)?,
                 Update::Control(id) => {
                     let control = &window.controls[id];
@@ -211,6 +213,7 @@ fn encoded_value(value: &ControlValue) -> String {
         ControlValue::Text(value) => encode(value),
         ControlValue::Number(value) => value.to_string(),
         ControlValue::Boolean(value) => u8::from(*value).to_string(),
+        ControlValue::Color(_) => unreachable!("Imgui-only color"),
     }
 }
 

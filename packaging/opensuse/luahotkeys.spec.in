@@ -36,6 +36,7 @@ cargo build --release --locked --offline --bin luahotkeys
 install -Dm755 target/release/luahotkeys %{buildroot}%{_bindir}/luahotkeys
 install -Dm644 packaging/example.lhk %{buildroot}%{_docdir}/%{name}/example.lhk
 install -Dm644 packaging/macro-gui.lhk %{buildroot}%{_docdir}/%{name}/macro-gui.lhk
+install -Dm644 packaging/imgui-demo.lhk %{buildroot}%{_docdir}/%{name}/imgui-demo.lhk
 install -Dm644 packaging/Gui.md %{buildroot}%{_docdir}/%{name}/Gui.md
 install -Dm644 packaging/Linux.md %{buildroot}%{_docdir}/%{name}/Linux.md
 
@@ -47,6 +48,7 @@ cargo test --release --locked --offline --bin luahotkeys
 %dir %{_docdir}/%{name}
 %{_docdir}/%{name}/example.lhk
 %{_docdir}/%{name}/macro-gui.lhk
+%{_docdir}/%{name}/imgui-demo.lhk
 %{_docdir}/%{name}/Gui.md
 %{_docdir}/%{name}/Linux.md
 %{_bindir}/luahotkeys

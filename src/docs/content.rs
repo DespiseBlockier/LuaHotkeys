@@ -23,6 +23,7 @@ const STARTER: &str = r#"hotkey("Ctrl+Alt+J", function()
 end)"#;
 
 const MACRO_GUI: &str = include_str!("../../packaging/macro-gui.lhk");
+const IMGUI_DEMO: &str = include_str!("../../packaging/imgui-demo.lhk");
 
 pub const CATEGORIES: &[Category] = &[
     Category {
@@ -129,11 +130,11 @@ pub const CATEGORIES: &[Category] = &[
     },
     Category {
         name: "Macro windows",
-        description: "Build a window with native controls, or choose the Dear ImGui engine. Add controls when your script starts and connect Lua functions to their signals. Global hotkeys keep working while a macro window is open.",
+        description: "Build a window with native controls, or choose the MainPink-style Dear ImGui engine. Connect Lua functions to control signals. Global hotkeys keep working while a macro window is open or collapsed.",
         functions: &[
             Function {
                 name: "defineGui",
-                description: "Chooses the Basic or Imgui engine. Basic uses ordinary system windows and is also available as the global gui. Imgui uses Dear ImGui with a draggable title bar, a minimize button, and a fixed size. The window options table accepts width, height, visible, and theme. Theme colors use #RRGGBB. Set header, background, control, accent, and text independently, and set rounding from 0 to 32.",
+                description: "Chooses the Basic or Imgui engine. Basic is also available as the global gui. Imgui defaults to a pink header, plum body, Merriweather type, and a chevron that collapses to the draggable header. Window options include width, height, visible, collapsed, animation in milliseconds, x and y position, and theme. Theme colors use #RRGGBB. Set header, background, tabs, control, accent, and text independently, and set rounding from 0 to 32.",
                 parameters: &[("engine: \"Basic\" | \"Imgui\"", "The window engine. Names are case-insensitive.")],
                 returns: Some("An engine with the window method."),
                 example: r##"local engine = defineGui("Imgui")
@@ -151,13 +152,58 @@ window:label("Dear ImGui is running")"##,
             },
             Function {
                 name: "gui:window",
-                description: "Declares one macro window for the script. Add its controls at startup. Use show(), hide(), or close() in a callback. Connect to closed to run a function when the window closes. Closing the window leaves registered hotkeys running.",
+                description: "Declares one macro window at startup. Basic controls are declared at startup. Imgui controls can also be added from callbacks. Use show(), hide(), or close() to change window visibility. Closing the window leaves registered hotkeys running.",
                 parameters: &[
                     ("title: string", "Title shown in the system window."),
                     ("options: (boolean | table)?", "Pass false to open the window later with show(). The Imgui engine also accepts an options table. See defineGui for a size and theme example."),
                 ],
                 returns: Some("The macro window."),
                 example: MACRO_GUI,
+            },
+            Function {
+                name: "window:tab",
+                description: "Adds an Imgui tab. The first tab starts selected. Call select() on a tab to switch to it. Add controls directly to a tab, or group them using folders and horizontal docks.",
+                parameters: &[("label: string", "The text in the tab strip.")],
+                returns: Some("A tab that accepts the window's control constructors."),
+                example: IMGUI_DEMO,
+            },
+            Function {
+                name: "tab:folder",
+                description: "Adds a collapsible group in the Imgui engine. Folders can also be added directly to the window or nested inside other groups. Use get(), set(boolean), or switch() to change its state. changed receives the new open state.",
+                parameters: &[("label: string", "Text in the folder bar."), ("open: boolean?", "Whether the folder starts open. Defaults to false.")],
+                returns: Some("A folder that accepts controls."),
+                example: "local advanced = tab:folder(\"Advanced\", true)\nadvanced:label(\"Extra options\")",
+            },
+            Function {
+                name: "folder:dock",
+                description: "Adds an Imgui row that places its controls side by side. Call dock() on the window, a tab, or a folder.",
+                parameters: &[],
+                returns: Some("A row that accepts controls."),
+                example: "local row = folder:dock()\nlocal start = row:button(\"Start\")\nlocal stop = row:button(\"Stop\")",
+            },
+            Function {
+                name: "tab:dropdown",
+                description: "Adds a searchable Imgui dropdown. get() and changed return the selected name or nil. Use set(name) to select, set(nil) to clear, and add_option(name) or remove_option(name) to update the list.",
+                parameters: &[("label: string", "Label next to the dropdown."), ("options: {string}", "Unique names in display order."), ("initial: string?", "The starting selection, if any.")],
+                returns: Some("A dropdown with get(), set(), and changed."),
+                example: "local mode = tab:dropdown(\"Mode\", {\"Type\", \"Press\"}, \"Type\")\nmode.changed:connect(function(name) log(name) end)",
+            },
+            Function {
+                name: "tab:color",
+                description: "Adds an Imgui color picker. Values are #RRGGBB strings. Use set_color(value) on another Imgui control to change its display color, or set_color(nil) to restore the theme color.",
+                parameters: &[("label: string", "Label next to the picker."), ("initial: string?", "Starting color. Defaults to #FF85A2.")],
+                returns: Some("A picker with get(), set(), and changed."),
+                example: r##"local color = tab:color("Button color", "#FF85A2")
+color.changed:connect(function(value)
+    button:set_color(value)
+end)"##,
+            },
+            Function {
+                name: "window:collapse",
+                description: "Collapses an Imgui window to its draggable header. Call expand() to restore its configured size or is_collapsed() to read its state. The chevron performs the same actions. hide() still hides the entire window.",
+                parameters: &[],
+                returns: None,
+                example: "local window = defineGui(\"Imgui\"):window(\"Settings\", { animation = 120 })\nwindow:collapse()",
             },
             Function {
                 name: "window:button",
@@ -247,9 +293,9 @@ end)"#,
             },
             Function {
                 name: "signal:connect",
-                description: "Connects a Lua function to a signal. Connections run in registration order. pressed, hovered, unhovered, and closed pass no arguments. changed passes the new slider number, toggle boolean, field text, or keybind combo. A callback can update other controls. Errors appear in the script log.",
+                description: "Connects a Lua function to a signal. Connections run in registration order. pressed, hovered, unhovered, and closed pass no arguments. changed passes the control's new value. A callback can update other controls. Errors appear in the script log.",
                 parameters: &[("callback: (...any) -> ()", "The function to run when this signal fires.")],
-                returns: None,
+                returns: Some("A connection. Call disconnect() to stop receiving the signal."),
                 example: r#"local window = gui:window("Settings")
 local delay = window:slider("Delay", 0, 1000, 250)
 delay.changed:connect(function(value)
@@ -571,7 +617,7 @@ mod tests {
                 .iter()
                 .map(|category| category.functions.len())
                 .sum::<usize>(),
-            22
+            28
         );
         for (group, category) in CATEGORIES.iter().enumerate() {
             let page = Page::Category(group);

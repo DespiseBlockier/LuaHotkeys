@@ -65,6 +65,8 @@ Annotations and aliases are erased before the entry script runs in Lua 5.1. API 
 
 Use `gui:window("Macro controls")` for an ordinary window or `defineGui("Imgui")` to use Dear ImGui. Both engines provide buttons, hover events, sliders, toggles, labels, text fields, and keybind pickers. Connect Lua callbacks to each control's signals.
 
+The Imgui engine uses a pink, collapsible panel styled after MainPink. It also adds tabs, folders, horizontal rows, searchable dropdowns, and color pickers. Run [imgui-demo.lhk](packaging/imgui-demo.lhk) to see them together.
+
 Open **Docs → Macro windows** in the editor or see the [GUI reference and examples](packaging/Gui.md).
 
 ## Lua functions

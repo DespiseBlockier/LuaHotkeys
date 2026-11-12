@@ -13,7 +13,7 @@ use glutin::{
     display::{GetGlDisplay, GlDisplay},
     surface::{GlSurface, Surface, SurfaceAttributesBuilder, SwapInterval, WindowSurface},
 };
-use imgui::{Condition, ConfigFlags, MouseButton, StyleColor, WindowFlags};
+use imgui::{ConfigFlags, FontConfig, FontGlyphRanges, FontSource};
 use imgui_glow_renderer::{
     glow::{self, HasContext},
     AutoRenderer,
@@ -21,7 +21,7 @@ use imgui_glow_renderer::{
 use imgui_winit_support::{HiDpiMode, WinitPlatform};
 use mlua::Lua;
 use winit::{
-    dpi::{LogicalSize, PhysicalSize},
+    dpi::{LogicalPosition, LogicalSize, PhysicalSize},
     event::{Event as WindowEventLoop, WindowEvent},
     event_loop::{ControlFlow, EventLoop, EventLoopBuilder},
     keyboard::{Key as LogicalKey, KeyCode, ModifiersState, NamedKey, PhysicalKey},
@@ -30,11 +30,15 @@ use winit::{
     window::{Window as HostWindow, WindowAttributes},
 };
 
-use super::{ControlValue, Event, Gui, Kind, Theme, Window};
+use super::{Event, Gui, Update, Window};
 use crate::{
     runtime::Output,
     shortcut::{self, Combination, Key, ModifierKey, NumpadOperator, ALT, CONTROL, SHIFT, SUPER},
 };
+
+mod paint;
+const TITLE_HEIGHT: u32 = 22;
+const MERRIWEATHER: &[u8] = include_bytes!("immediate/Merriweather-Regular.ttf");
 
 pub fn run(
     lua: &Lua,
@@ -48,10 +52,32 @@ pub fn run(
         let window = gui.window();
         Host::new(&event_loop, window.as_ref().expect("Imgui GUI"))?
     };
-    let theme = gui.window().as_ref().expect("Imgui GUI").appearance.theme;
+    let (theme, animation_ms, collapsed) = {
+        let window = gui.window();
+        let window = window.as_ref().expect("Imgui GUI");
+        (
+            window.appearance.theme,
+            window.appearance.animation_ms,
+            window.collapsed,
+        )
+    };
     let mut imgui = imgui::Context::create();
     imgui.set_ini_filename(None);
-    apply_theme(imgui.style_mut(), theme);
+    paint::apply_theme(imgui.style_mut(), theme);
+    let add_font = |imgui: &mut imgui::Context, size_pixels| {
+        imgui.fonts().add_font(&[FontSource::TtfData {
+            data: MERRIWEATHER,
+            size_pixels,
+            config: Some(FontConfig {
+                glyph_ranges: FontGlyphRanges::from_slice(&[0x20, 0x024F, 0x2000, 0x206F, 0]),
+                ..FontConfig::default()
+            }),
+        }])
+    };
+    add_font(&mut imgui, 14.0);
+    let title_font = add_font(&mut imgui, 16.0);
+    let mut paint = paint::PanelPaint::new(title_font);
+    let mut height = Height::new(host.full_size.height, collapsed, animation_ms);
     imgui
         .io_mut()
         .config_flags
@@ -119,7 +145,7 @@ pub fn run(
                         last_frame = now;
                         platform.prepare_frame(imgui.io_mut(), &host.window)?;
                         let ui = imgui.frame();
-                        draw(ui, gui, &host.window);
+                        paint.draw(ui, gui, &host.window);
                         platform.prepare_render(ui, &host.window);
                         unsafe {
                             let [r, g, b, a] = theme.background;
@@ -135,7 +161,11 @@ pub fn run(
                 _ => {}
             }
             gui.dispatch(lua, output);
-            gui.updates();
+            for update in gui.updates() {
+                if let Update::Position(x, y) = update {
+                    host.window.set_outer_position(LogicalPosition::new(x, y));
+                }
+            }
             let window = gui.window();
             let window = window.as_ref().expect("Imgui GUI");
             if window.closed {
@@ -150,6 +180,11 @@ pub fn run(
             if about_to_wait {
                 let now = Instant::now();
                 if now >= next_frame {
+                    if let Some(new_height) = height.advance(window.collapsed, now) {
+                        let _ = host
+                            .window
+                            .request_inner_size(LogicalSize::new(host.full_size.width, new_height));
+                    }
                     let interval = if visible && !occluded {
                         host.window.request_redraw();
                         Duration::from_millis(16)
@@ -177,22 +212,111 @@ struct Host {
     context: PossiblyCurrentContext,
     surface: Surface<WindowSurface>,
     window: HostWindow,
+    full_size: LogicalSize<u32>,
+}
+
+struct Height {
+    expanded: u32,
+    from: u32,
+    target: u32,
+    shown: u32,
+    started: Instant,
+    duration: Duration,
+}
+
+impl Height {
+    fn new(expanded: u32, collapsed: bool, animation_ms: u32) -> Self {
+        let height = if collapsed { TITLE_HEIGHT } else { expanded };
+        Self {
+            expanded,
+            from: height,
+            target: height,
+            shown: height,
+            started: Instant::now(),
+            duration: Duration::from_millis(animation_ms.into()),
+        }
+    }
+
+    fn advance(&mut self, collapsed: bool, now: Instant) -> Option<u32> {
+        let target = if collapsed {
+            TITLE_HEIGHT
+        } else {
+            self.expanded
+        };
+        if self.target != target {
+            self.from = self.shown;
+            self.target = target;
+            self.started = now;
+        }
+        let elapsed = now.duration_since(self.started);
+        let next = if elapsed >= self.duration {
+            self.target
+        } else {
+            let progress = elapsed.as_secs_f32() / self.duration.as_secs_f32();
+            let eased = 1.0 - (1.0 - progress).powi(3);
+            (self.from as f32 + (self.target as f32 - self.from as f32) * eased).round() as u32
+        };
+        if self.shown == next {
+            None
+        } else {
+            self.shown = next;
+            Some(next)
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn collapse_and_expand_restore_the_configured_height() {
+        let now = Instant::now();
+        let mut height = Height::new(264, false, 100);
+        assert_eq!(height.advance(true, now), None);
+        let intermediate = height
+            .advance(true, now + Duration::from_millis(50))
+            .unwrap();
+        assert!(intermediate > TITLE_HEIGHT && intermediate < 264);
+        assert_eq!(
+            height.advance(true, now + Duration::from_millis(100)),
+            Some(TITLE_HEIGHT)
+        );
+        assert_eq!(
+            height.advance(false, now + Duration::from_millis(110)),
+            None
+        );
+        assert_eq!(
+            height.advance(false, now + Duration::from_millis(210)),
+            Some(264)
+        );
+    }
 }
 
 impl Host {
     fn new(event_loop: &EventLoop<()>, window: &Window) -> Result<Self, Box<dyn Error>> {
-        let auto_height = (142 + window.controls.len().saturating_mul(44)).clamp(180, 650);
+        let full_size = LogicalSize::new(
+            window.appearance.width.unwrap_or(300),
+            window.appearance.height.unwrap_or(222),
+        );
         let size = LogicalSize::new(
-            window.appearance.width.unwrap_or(460),
-            window.appearance.height.unwrap_or(auto_height as u32),
+            full_size.width,
+            if window.collapsed {
+                TITLE_HEIGHT
+            } else {
+                full_size.height
+            },
         );
         let rounding = window.appearance.theme.rounding;
-        let attributes = WindowAttributes::default()
+        let mut attributes = WindowAttributes::default()
             .with_title(&window.title)
             .with_inner_size(size)
             .with_resizable(false)
             .with_decorations(false)
             .with_visible(false);
+        if let Some((x, y)) = window.position {
+            attributes = attributes.with_position(LogicalPosition::new(x, y));
+        }
         let (window, config) = glutin_winit::DisplayBuilder::new()
             .with_window_attributes(Some(attributes))
             .build(
@@ -244,6 +368,7 @@ impl Host {
             window,
             surface,
             context,
+            full_size,
         })
     }
 
@@ -253,39 +378,6 @@ impl Host {
                 self.context.display().get_proc_address(name).cast()
             })
         }
-    }
-}
-
-fn apply_theme(style: &mut imgui::Style, theme: Theme) {
-    style.window_rounding = theme.rounding;
-    style.window_border_size = 0.0;
-    style.child_border_size = 0.0;
-    style.frame_rounding = theme.rounding.min(8.0);
-    style.grab_rounding = style.frame_rounding;
-    style.scrollbar_rounding = style.frame_rounding;
-    style.frame_padding = [8.0, 6.0];
-    style.item_spacing = [8.0, 8.0];
-    let blend = |strength: f32| {
-        std::array::from_fn(|index| {
-            theme.control[index] * (1.0 - strength) + theme.accent[index] * strength
-        })
-    };
-    for (color, value) in [
-        (StyleColor::Text, theme.text),
-        (StyleColor::WindowBg, theme.background),
-        (StyleColor::ChildBg, theme.background),
-        (StyleColor::FrameBg, theme.control),
-        (StyleColor::FrameBgHovered, blend(0.18)),
-        (StyleColor::FrameBgActive, blend(0.28)),
-        (StyleColor::Button, theme.control),
-        (StyleColor::ButtonHovered, blend(0.23)),
-        (StyleColor::ButtonActive, blend(0.35)),
-        (StyleColor::CheckMark, theme.accent),
-        (StyleColor::SliderGrab, theme.accent),
-        (StyleColor::SliderGrabActive, theme.accent),
-        (StyleColor::NavHighlight, theme.accent),
-    ] {
-        style[color] = value;
     }
 }
 
@@ -301,7 +393,8 @@ fn round_window(window: &HostWindow, size: PhysicalSize<u32>, rounding: f32) {
         return;
     };
     let handle = handle.hwnd.get() as _;
-    let diameter = (2.0 * rounding * window.scale_factor() as f32).round() as i32;
+    let diameter = ((2.0 * rounding * window.scale_factor() as f32).round() as u32)
+        .min(size.width.min(size.height)) as i32;
     unsafe {
         if diameter == 0 {
             SetWindowRgn(handle, std::ptr::null_mut(), 1);
@@ -378,139 +471,6 @@ fn round_window(window: &HostWindow, size: PhysicalSize<u32>, rounding: f32) {
             &rectangles,
         )
         .map(|cookie| cookie.check());
-}
-
-const TITLE_HEIGHT: f32 = 40.0;
-
-fn draw_header(ui: &imgui::Ui, window: &Window, host: &HostWindow) {
-    let width = ui.io().display_size[0];
-    let theme = window.appearance.theme;
-    let draw = ui.get_window_draw_list();
-    draw.add_rect([0.0, 0.0], [width, TITLE_HEIGHT], theme.header)
-        .rounding(theme.rounding)
-        .round_bot_left(false)
-        .round_bot_right(false)
-        .filled(true)
-        .build();
-    draw.with_clip_rect([14.0, 0.0], [width - 48.0, TITLE_HEIGHT], || {
-        draw.add_text(
-            [14.0, (TITLE_HEIGHT - ui.text_line_height()) * 0.5],
-            theme.text,
-            &window.title,
-        );
-    });
-    ui.set_cursor_pos([0.0, 0.0]);
-    ui.invisible_button("##drag_title", [width - 46.0, TITLE_HEIGHT]);
-    if ui.is_item_clicked() {
-        let _ = host.drag_window();
-    }
-    ui.set_cursor_pos([width - 38.0, 8.0]);
-    if ui.button_with_size("##minimize", [28.0, 24.0]) {
-        host.set_minimized(true);
-    }
-    let [x, y] = ui.item_rect_min();
-    draw.add_line([x + 8.0, y + 13.0], [x + 20.0, y + 13.0], theme.text)
-        .thickness(1.5)
-        .build();
-    if ui.is_item_hovered() {
-        ui.tooltip_text("Minimize");
-    }
-}
-
-fn draw(ui: &imgui::Ui, gui: &Gui, host: &HostWindow) {
-    let mut events = Vec::new();
-    {
-        let window = gui.window();
-        let window = window.as_ref().expect("Imgui GUI");
-        let mut recorder_hovered = false;
-        ui.window("##LuaHotkeysControls")
-            .position([0.0, 0.0], Condition::Always)
-            .size(ui.io().display_size, Condition::Always)
-            .flags(
-                WindowFlags::NO_TITLE_BAR
-                    | WindowFlags::NO_MOVE
-                    | WindowFlags::NO_RESIZE
-                    | WindowFlags::NO_COLLAPSE
-                    | WindowFlags::NO_SCROLLBAR
-                    | WindowFlags::NO_SCROLL_WITH_MOUSE
-                    | WindowFlags::NO_SAVED_SETTINGS,
-            )
-            .build(|| {
-                draw_header(ui, window, host);
-                let [width, height] = ui.io().display_size;
-                ui.set_cursor_pos([12.0, TITLE_HEIGHT + 12.0]);
-                ui.child_window("##controls")
-                    .size([
-                        (width - 24.0).max(1.0),
-                        (height - TITLE_HEIGHT - 24.0).max(1.0),
-                    ])
-                    .build(|| {
-                        for (id, control) in window.controls.iter().enumerate() {
-                            let _id = ui.push_id_usize(id);
-                            match (control.kind, &control.value) {
-                                (Kind::Label, ControlValue::Text(value)) => ui.text_wrapped(value),
-                                (Kind::Button, _) => {
-                                    let pressed = ui.button(&control.label);
-                                    let hovered = ui.is_item_hovered();
-                                    if hovered != control.hovered {
-                                        events.push(Event::Hover(id, hovered));
-                                    }
-                                    if pressed {
-                                        events.push(Event::Press(id));
-                                    }
-                                }
-                                (Kind::Slider { min, max }, ControlValue::Number(value)) => {
-                                    let mut value = i64::from(*value);
-                                    if ui.slider(
-                                        &control.label,
-                                        i64::from(min),
-                                        i64::from(max),
-                                        &mut value,
-                                    ) {
-                                        events.push(Event::Change(
-                                            id,
-                                            ControlValue::Number(value as i32),
-                                        ));
-                                    }
-                                }
-                                (Kind::Toggle, ControlValue::Boolean(value)) => {
-                                    let mut value = *value;
-                                    if ui.checkbox(&control.label, &mut value) {
-                                        events
-                                            .push(Event::Change(id, ControlValue::Boolean(value)));
-                                    }
-                                }
-                                (Kind::Input, ControlValue::Text(value)) => {
-                                    let mut value = value.clone();
-                                    if ui.input_text(&control.label, &mut value).build() {
-                                        events.push(Event::Change(id, ControlValue::Text(value)));
-                                    }
-                                }
-                                (Kind::Keybind, _) => {
-                                    let recording = window.recording == Some(id);
-                                    let caption =
-                                        format!("{}###keybind", control.keybind_caption(recording));
-                                    if ui.button(caption) {
-                                        events.push(Event::Record(id));
-                                    }
-                                    if recording {
-                                        recorder_hovered = ui.is_item_hovered();
-                                    }
-                                }
-                                _ => unreachable!("GUI control value"),
-                            }
-                        }
-                    });
-            });
-        if let Some(id) = window.recording {
-            if ui.is_mouse_clicked(MouseButton::Left) && !recorder_hovered {
-                events.insert(0, Event::CancelRecording(id));
-            }
-        }
-    }
-    for event in events {
-        gui.event(event);
-    }
 }
 
 fn capture_key(event: &winit::event::KeyEvent, modifiers: ModifiersState) -> Option<Combination> {

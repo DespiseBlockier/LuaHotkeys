@@ -138,6 +138,7 @@ impl NativeWindow {
                 WS_TABSTOP | ES_AUTOHSCROLL as u32,
                 WS_EX_CLIENTEDGE,
             ),
+            _ => unreachable!("Imgui-only control"),
         };
         let id = id + FIRST_ID;
         if id > usize::from(u16::MAX) {
@@ -277,6 +278,7 @@ impl NativeWindow {
             }
             match update {
                 Update::Close => self.destroy(),
+                Update::Position(_, _) => unreachable!("Imgui-only position"),
                 Update::Visibility(visible) => unsafe {
                     if !visible {
                         self.state.tracking.borrow_mut().clear();
@@ -330,6 +332,7 @@ fn row_height(kind: Kind) -> i32 {
         Kind::Label => 22,
         Kind::Button | Kind::Toggle | Kind::Keybind => 31,
         Kind::Slider { .. } | Kind::Input => 48,
+        _ => unreachable!("Imgui-only control"),
     }
 }
 
@@ -350,6 +353,7 @@ impl NativeControl {
                     SendMessageW(self.handle, BM_SETCHECK, usize::from(*value), 0);
                 }
                 ControlValue::None => {}
+                ControlValue::Color(_) => unreachable!("Imgui-only color"),
             }
         }
     }

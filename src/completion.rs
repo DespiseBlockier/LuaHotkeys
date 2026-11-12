@@ -69,11 +69,34 @@ const WINDOW_METHODS: &[Item] = &[
     call("toggle", "(label: string, initial: boolean?)"),
     call("input", "(label: string, initial: string?)"),
     call("keybind", "(label: string, initial: Combo?)"),
+    call("tab", "(label: string)"),
+    call("folder", "(label: string, open: boolean?)"),
+    call("dock", "()"),
+    call(
+        "dropdown",
+        "(label: string, options: {string}, initial: string?)",
+    ),
+    call("color", "(label: string, initial: string?)"),
+    call("collapse", "()"),
+    call("expand", "()"),
+    call("is_collapsed", "(): boolean"),
+    call("set_position", "(x: number, y: number)"),
     call("show", "()"),
     call("hide", "()"),
     call("close", "()"),
 ];
 const SIGNAL_METHODS: &[Item] = &[call("connect", "(callback: (...any) -> ())")];
+const CONTROL_METHODS: &[Item] = &[
+    call("get", "()"),
+    call("set", "(value: any)"),
+    call("switch", "()"),
+    call("select", "()"),
+    call("set_color", "(color: string?)"),
+    call("get_color", "(): string?"),
+    call("add_option", "(name: string)"),
+    call("remove_option", "(name: string)"),
+    call("destroy", "()"),
+];
 
 const GLOBALS: &[Item] = &[
     call("assert", "(value, [message])"),
@@ -311,6 +334,15 @@ pub fn signature(name: &str) -> Option<&'static str> {
         let methods = match object {
             "gui" | "engine" => ENGINE_METHODS,
             "window" => WINDOW_METHODS,
+            "tab" | "folder" | "dock" => {
+                return WINDOW_METHODS
+                    .iter()
+                    .chain(CONTROL_METHODS)
+                    .find(|item| item.name == name)
+                    .map(|item| item.detail)
+            }
+            "control" | "dropdown" | "picker" => CONTROL_METHODS,
+            "connection" => &[call("disconnect", "()")],
             "signal" => SIGNAL_METHODS,
             _ => return None,
         };
