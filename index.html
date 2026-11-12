@@ -1,18 +1,91 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Install LuaHotkeys on Linux</title>
 <style>
-body { max-width: 46rem; margin: 3rem auto; padding: 0 1rem; font: 1rem/1.6 system-ui, sans-serif; color-scheme: light dark; }
-pre { padding: .75rem 1rem; background: Canvas; border: 1px solid GrayText; overflow: auto; }
+:root {
+    color-scheme: dark;
+    --page: #101722;
+    --text: #edf2f9;
+    --link: #91c5ff;
+    --surface: #182335;
+    --border: #62748c;
+    background: var(--page);
+    color: var(--text);
+}
+:root[data-theme="light"] {
+    color-scheme: light;
+    --page: #fff;
+    --text: #172235;
+    --link: #194f9e;
+    --surface: #f3f5f8;
+    --border: #6c7b91;
+}
+body { max-width: 46rem; margin: 3rem auto; padding: 0 1rem; font: 1rem/1.6 system-ui, sans-serif; }
+header { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: .75rem 1rem; }
+h1 { margin: 0; }
+a { color: var(--link); }
+pre {
+    padding: .75rem 1rem;
+    background: var(--surface);
+    color: var(--text);
+    border: 1px solid var(--border);
+    overflow: auto;
+}
+button {
+    padding: .4rem .75rem;
+    border: 1px solid var(--border);
+    border-radius: .375rem;
+    background: var(--surface);
+    color: var(--text);
+    font: inherit;
+    cursor: pointer;
+}
+button:hover { border-color: var(--link); }
+:focus-visible { outline: 2px solid var(--link); outline-offset: 3px; }
 code { overflow-wrap: anywhere; }
 </style>
+<script>
+const themeStorageKey = "luahotkeys-theme";
+const page = document.documentElement;
+
+try {
+    if (localStorage.getItem(themeStorageKey) === "light") {
+        page.dataset.theme = "light";
+    }
+} catch {
+    // Keep the default theme when browser storage is unavailable.
+}
+
+document.addEventListener("DOMContentLoaded", () => {
+    const button = document.getElementById("theme-toggle");
+    function updateLabel() {
+        button.textContent = page.dataset.theme === "dark" ? "Switch to light mode" : "Switch to dark mode";
+    }
+
+    updateLabel();
+    button.hidden = false;
+    button.addEventListener("click", () => {
+        const next = page.dataset.theme === "dark" ? "light" : "dark";
+        page.dataset.theme = next;
+        updateLabel();
+        try {
+            localStorage.setItem(themeStorageKey, next);
+        } catch {
+            // The switch still works for the current page.
+        }
+    });
+});
+</script>
 </head>
 <body>
 <main>
+<header>
 <h1>Install LuaHotkeys on Linux</h1>
+<button id="theme-toggle" type="button" hidden></button>
+</header>
 <p>The x86-64 terminal runner supports Arch Linux and openSUSE Tumbleweed. Global hotkeys and input automation require an X11 session.</p>
 <p><a href="install-linux.sh" download>Download the Linux installer</a>, then run it from your download folder. It registers the signed repository and installs LuaHotkeys using your package manager.</p>
 <pre><code>sh ./install-linux.sh</code></pre>
