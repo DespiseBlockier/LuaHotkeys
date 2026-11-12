@@ -1,4 +1,5 @@
 mod x11;
+pub(crate) use x11::Keyboard;
 
 use std::{
     env, fs, io,
@@ -6,11 +7,13 @@ use std::{
     path::{Path, PathBuf},
     process::{Command, ExitCode, Output as ProcessOutput, Stdio},
     thread,
+    time::Duration,
 };
 
 use mlua::Lua;
 
 use crate::{
+    macro_gui::{immediate, tk, Engine, Gui},
     runtime::{self, Binding, Output},
     shortcut::{Combination, ALT, CONTROL, MODIFIERS, NAMED_KEYS, SHIFT, SUPER},
 };
@@ -91,12 +94,82 @@ pub fn validate_hotkey(_combo: Combination) -> Result<(), &'static str> {
     Ok(())
 }
 
-pub fn listen(lua: &Lua, bindings: &[Binding], output: Output) -> mlua::Result<()> {
-    if bindings.is_empty() {
+pub fn listen(lua: &Lua, bindings: &[Binding], output: Output, gui: &Gui) -> mlua::Result<()> {
+    if bindings.is_empty() && gui.engine().is_none() {
         return Ok(());
     }
     require_x11().map_err(mlua::Error::external)?;
-    x11::listen(lua, bindings, output).map_err(|error| mlua::Error::runtime(error.to_string()))
+    listen_x11(lua, bindings, output, gui).map_err(|error| mlua::Error::runtime(error.to_string()))
+}
+
+fn listen_x11(
+    lua: &Lua,
+    bindings: &[Binding],
+    output: Output,
+    gui: &Gui,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut hotkeys = if bindings.is_empty() {
+        None
+    } else {
+        Some(x11::Hotkeys::register(bindings, output)?)
+    };
+    gui.updates();
+    match gui.engine() {
+        Some(Engine::Basic) => {
+            let mut window = tk::TkWindow::new(gui.window().as_ref().expect("Basic GUI"))?;
+            let mut descriptors = vec![window.fd()];
+            if let Some(keys) = &hotkeys {
+                descriptors.push(keys.fd());
+            }
+            while gui.engine().is_some() {
+                while gui.engine().is_some() {
+                    let Some(event) = window.read()? else { break };
+                    gui.event(event);
+                    gui.dispatch(lua, output);
+                    window.sync(gui)?;
+                }
+                if gui.engine().is_none() {
+                    break;
+                }
+                let mut pending = false;
+                if let Some(keys) = &mut hotkeys {
+                    pending = keys.update_recording(gui.recording().is_some())?;
+                    keys.drain(lua, output, gui)?;
+                }
+                gui.dispatch(lua, output);
+                window.sync(gui)?;
+                if gui.engine().is_some() {
+                    tk::wait_readable(&descriptors, if pending { 16 } else { -1 })?;
+                }
+            }
+        }
+        Some(Engine::Imgui) => {
+            immediate::run(
+                lua,
+                gui,
+                output,
+                winit::event_loop::EventLoop::builder(),
+                || {
+                    if let Some(keys) = &mut hotkeys {
+                        keys.update_recording(gui.recording().is_some())?;
+                        keys.drain(lua, output, gui)?;
+                    }
+                    Ok(())
+                },
+            )?;
+        }
+        None => {}
+    }
+    if let Some(keys) = &mut hotkeys {
+        while keys.update_recording(false)? {
+            thread::sleep(Duration::from_millis(16));
+        }
+        loop {
+            keys.wait(lua, output, gui)?;
+            gui.dispatch(lua, output);
+        }
+    }
+    Ok(())
 }
 
 fn require_x11() -> io::Result<()> {
@@ -104,7 +177,7 @@ fn require_x11() -> io::Result<()> {
         || env::var_os("XDG_SESSION_TYPE").is_some_and(|kind| kind == "wayland");
     if wayland {
         return Err(io::Error::other(
-            "Global hotkeys and input automation require an X11 desktop session in this Linux build.",
+            "Macro windows, global hotkeys, and input automation require an X11 desktop session in this Linux build.",
         ));
     }
     if env::var_os("DISPLAY").is_none_or(|display| display.is_empty()) {

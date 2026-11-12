@@ -70,6 +70,9 @@ foreach ($package in $packages) {
         # mlua-sys shares the MIT license of its mlua workspace.
         $files = @(Get-Item -LiteralPath (Join-Path (Split-Path -Parent $mlua.manifest_path) 'LICENSE'))
     }
+    if ($package.name -eq 'imgui-sys') {
+        $files += Get-Item -LiteralPath (Join-Path $directory 'third-party\imgui-master\imgui\LICENSE.txt')
+    }
     $label = "$($package.name) $($package.version) ($($package.license))"
     foreach ($file in ($files | Sort-Object FullName -Unique)) {
         $licenseText = [IO.File]::ReadAllText($file.FullName).TrimEnd()

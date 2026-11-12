@@ -9,13 +9,22 @@ URL:            https://github.com/DespiseBlockier/LuaHotkeys
 Source0:        %{name}-%{version}.tar.gz
 BuildRequires:  cargo >= 1.88
 BuildRequires:  gcc
+BuildRequires:  gcc-c++
 BuildRequires:  rust >= 1.88
 Requires:       xdg-utils
 Requires:       xdotool
+Requires:       libX11-xcb1
+Requires:       libXcursor1
+Requires:       libXi6
+Requires:       libxkbcommon-x11-0
+Requires:       libGL.so.1()(64bit)
+Requires:       libEGL.so.1()(64bit)
+Suggests:       tk
+Suggests:       Mesa-dri
 
 %description
 Runs LuaHotkeys scripts using Lua 5.1, including typed annotations and global
-shortcuts under X11.
+shortcuts and macro windows under X11.
 
 %prep
 %autosetup
@@ -26,14 +35,18 @@ cargo build --release --locked --offline --bin luahotkeys
 %install
 install -Dm755 target/release/luahotkeys %{buildroot}%{_bindir}/luahotkeys
 install -Dm644 packaging/example.lhk %{buildroot}%{_docdir}/%{name}/example.lhk
+install -Dm644 packaging/macro-gui.lhk %{buildroot}%{_docdir}/%{name}/macro-gui.lhk
+install -Dm644 packaging/Gui.md %{buildroot}%{_docdir}/%{name}/Gui.md
 install -Dm644 packaging/Linux.md %{buildroot}%{_docdir}/%{name}/Linux.md
 
 %check
-cargo test --locked --offline --bin luahotkeys
+cargo test --release --locked --offline --bin luahotkeys
 
 %files
 %license packaging/THIRD-PARTY-LINUX.txt
 %dir %{_docdir}/%{name}
 %{_docdir}/%{name}/example.lhk
+%{_docdir}/%{name}/macro-gui.lhk
+%{_docdir}/%{name}/Gui.md
 %{_docdir}/%{name}/Linux.md
 %{_bindir}/luahotkeys

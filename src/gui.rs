@@ -1073,6 +1073,17 @@ pub fn run(file: Option<PathBuf>, start_hidden: bool) -> io::Result<()> {
                         {
                             continue;
                         }
+                        let key = msg.wParam as u16;
+                        if msg.hwnd == state.editor
+                            && !ctrl
+                            && (key == VK_TAB || (key == VK_RETURN && !shift))
+                        {
+                            state.popup.dismiss();
+                            if editor::indent_key(state.editor, key == VK_TAB, shift) {
+                                state.after_completion();
+                                continue;
+                            }
+                        }
                     }
                     let action = match (msg.wParam as u16, ctrl, shift) {
                         (VK_F5, false, false) => RUN,

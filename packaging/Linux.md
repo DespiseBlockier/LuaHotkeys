@@ -1,7 +1,7 @@
 
 # LuaHotkeys on Linux
 
-The Linux build is a terminal runner for an X11 desktop session. It runs the same Lua 5.1 macros and Luau-style type annotations as the Windows app. Use a text editor of your choice to edit a script.
+The Linux build runs Lua 5.1 macros and Luau-style type annotations in an X11 desktop session. Use a text editor of your choice to edit a script. Scripts can open [macro windows](Gui.md) with the Basic engine from the optional Tk package or with Dear ImGui through OpenGL.
 
 ## Install on Arch Linux or openSUSE Tumbleweed
 
@@ -36,7 +36,7 @@ Keep the runner open for global shortcuts. Press Ctrl+C in the terminal to stop 
 
 ## Build the runner
 
-Build with Rust 1.88 or newer and a C compiler. The runner builds Lua 5.1 from source as part of Cargo. Install `xdotool` and `xdg-utils` for the Linux desktop functions.
+Build with Rust 1.88 or newer and C and C++ compilers. The runner builds Lua 5.1 and Dear ImGui from source as part of Cargo. Install `xdotool` and `xdg-utils` for the Linux desktop functions.
 
 ```sh
 cargo build --locked --release --bin luahotkeys
@@ -66,7 +66,7 @@ The hosted LuaHotkeys repository serves the signed package and the database gene
 
 ### openSUSE Tumbleweed (x86-64)
 
-With `rpm-build`, `cargo`, `rust`, and `gcc` installed, build from the packaging directory:
+With `rpm-build`, `cargo`, `rust`, `gcc`, and `gcc-c++` installed, build from the packaging directory:
 
 ```sh
 rpmbuild -bb --define "_sourcedir $PWD" luahotkeys.spec

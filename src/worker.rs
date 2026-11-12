@@ -1,19 +1,26 @@
 use std::{
+    cell::RefCell,
     io::{self, BufRead, Read, Write},
     ptr::{null, null_mut},
+    rc::Rc,
     thread,
 };
 
-use base64::{engine::general_purpose::STANDARD, Engine};
+use base64::{engine::general_purpose::STANDARD, Engine as _};
 use mlua::{Error, Lua};
 use windows_sys::Win32::UI::{
     Shell::ShellExecuteW,
-    WindowsAndMessaging::{GetMessageW, PeekMessageW, MSG, PM_NOREMOVE, SW_SHOWNORMAL, WM_HOTKEY},
+    WindowsAndMessaging::{
+        DispatchMessageW, GetMessageW, IsDialogMessageW, PeekMessageW, TranslateMessage, MSG,
+        PM_NOREMOVE, SW_SHOWNORMAL, WM_HOTKEY,
+    },
 };
+use winit::{event_loop::EventLoop, platform::windows::EventLoopBuilderExtWindows};
 
 use crate::{
     common::wide,
     input,
+    macro_gui::{immediate, windows::NativeWindow, Engine, Gui},
     runtime::{self, Binding, Output},
     shortcut::{Combination, Key},
 };
@@ -124,7 +131,7 @@ fn quote(value: &str) -> String {
     quoted
 }
 
-pub fn listen(lua: &Lua, bindings: &[Binding], output: Output) -> mlua::Result<()> {
+pub fn listen(lua: &Lua, bindings: &[Binding], output: Output, gui: &Gui) -> mlua::Result<()> {
     let mut windows_message = MSG::default();
     unsafe { PeekMessageW(&mut windows_message, null_mut(), 0, 0, PM_NOREMOVE) };
     let mut registered = Registered(0);
@@ -138,23 +145,76 @@ pub fn listen(lua: &Lua, bindings: &[Binding], output: Output) -> mlua::Result<(
         output('L', &format!("Bound {}", binding.name));
     }
     output('R', &bindings.len().to_string());
-    if bindings.is_empty() {
-        return Ok(());
-    }
+    gui.updates();
+    let window = match gui.engine() {
+        Some(Engine::Basic) => Some(
+            NativeWindow::new(gui.window().as_ref().expect("Basic GUI"))
+                .map_err(Error::external)?,
+        ),
+        Some(Engine::Imgui) => {
+            let pending = Rc::new(RefCell::new(Vec::new()));
+            let messages = pending.clone();
+            let mut builder = EventLoop::builder();
+            builder.with_msg_hook(move |message| {
+                let message = unsafe { &*message.cast::<MSG>() };
+                if message.message != WM_HOTKEY {
+                    return false;
+                }
+                messages.borrow_mut().push(message.wParam);
+                true
+            });
+            immediate::run(lua, gui, output, builder, || {
+                for id in std::mem::take(&mut *pending.borrow_mut()) {
+                    activate(lua, bindings, output, id, gui);
+                }
+                Ok(())
+            })
+            .map_err(|error| Error::runtime(error.to_string()))?;
+            None
+        }
+        None => None,
+    };
     loop {
-        match unsafe { GetMessageW(&mut windows_message, null_mut(), WM_HOTKEY, WM_HOTKEY) } {
+        let handle = window.as_ref().map_or(null_mut(), NativeWindow::handle);
+        if handle.is_null() && bindings.is_empty() {
+            return Ok(());
+        }
+        let filter = if handle.is_null() { WM_HOTKEY } else { 0 };
+        match unsafe { GetMessageW(&mut windows_message, null_mut(), filter, filter) } {
             -1 => return Err(Error::external(io::Error::last_os_error())),
             0 => return Ok(()),
             _ => {
-                if let Some(binding) = windows_message
-                    .wParam
-                    .checked_sub(1)
-                    .and_then(|index| bindings.get(index))
+                if windows_message.message == WM_HOTKEY {
+                    activate(lua, bindings, output, windows_message.wParam, gui);
+                } else if !window
+                    .as_ref()
+                    .is_some_and(|window| window.capture_key(&windows_message, gui))
+                    && unsafe { IsDialogMessageW(handle, &windows_message) } == 0
                 {
-                    input::wait_for_release(binding.combo);
-                    binding.activate(lua, output);
+                    unsafe {
+                        TranslateMessage(&windows_message);
+                        DispatchMessageW(&windows_message);
+                    }
+                }
+                if let Some(window) = &window {
+                    for event in window.events() {
+                        gui.event(event);
+                        gui.dispatch(lua, output);
+                        window.sync(gui);
+                    }
+                    gui.dispatch(lua, output);
+                    window.sync(gui);
                 }
             }
+        }
+    }
+}
+
+fn activate(lua: &Lua, bindings: &[Binding], output: Output, id: usize, gui: &Gui) {
+    if let Some(binding) = id.checked_sub(1).and_then(|index| bindings.get(index)) {
+        input::wait_for_release(binding.combo);
+        if !gui.record_key(binding.combo) {
+            binding.activate(lua, output);
         }
     }
 }

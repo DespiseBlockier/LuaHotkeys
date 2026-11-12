@@ -14,6 +14,8 @@ use windows_sys::{
 
 use crate::{common::wide, highlight, theme};
 
+mod indent;
+
 const EM_GETOLEINTERFACE: u32 = 0x043c;
 const EM_GETTEXTEX: u32 = 0x045e;
 const EM_GETTEXTLENGTHEX: u32 = 0x045f;
@@ -149,13 +151,22 @@ pub fn position(hwnd: HWND, caret: usize) -> POINT {
 }
 
 pub fn replace(hwnd: HWND, range: std::ops::Range<usize>, value: &str, caret: usize) {
+    replace_and_select(hwnd, range, value, caret..caret);
+}
+
+fn replace_and_select(
+    hwnd: HWND,
+    range: std::ops::Range<usize>,
+    value: &str,
+    selected: std::ops::Range<usize>,
+) {
     let range = Range {
         start: range.start as i32,
         end: range.end as i32,
     };
     let cursor = Range {
-        start: caret as i32,
-        end: caret as i32,
+        start: selected.start as i32,
+        end: selected.end as i32,
     };
     let replacement = wide(value.replace('\n', "\r"));
     unsafe {
@@ -166,6 +177,29 @@ pub fn replace(hwnd: HWND, range: std::ops::Range<usize>, value: &str, caret: us
         SendMessageW(hwnd, 0x0458, 0, 0);
         SendMessageW(hwnd, 0x00b7, 0, 0); // EM_SCROLLCARET
     }
+}
+
+pub fn indent_key(hwnd: HWND, tab: bool, reverse: bool) -> bool {
+    let source = text(hwnd);
+    let (start, end) = selection(hwnd);
+    let (Some(start), Some(end)) = (utf16_to_byte(&source, start), utf16_to_byte(&source, end))
+    else {
+        return false;
+    };
+    let edit = if tab {
+        indent::tab(&source, start..end, reverse)
+    } else {
+        indent::enter(&source, start..end)
+    };
+    if source[edit.range.clone()] == edit.text {
+        return true;
+    }
+    let offset = source[..edit.range.start].encode_utf16().count();
+    let end = offset + source[edit.range.clone()].encode_utf16().count();
+    let selected = offset + edit.text[..edit.selected.start].encode_utf16().count()
+        ..offset + edit.text[..edit.selected.end].encode_utf16().count();
+    replace_and_select(hwnd, offset..end, &edit.text, selected);
+    true
 }
 
 pub fn highlight(hwnd: HWND) {

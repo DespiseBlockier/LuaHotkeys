@@ -100,6 +100,8 @@ pub(super) fn suggest(
                 .map(|name| value(name, "Key")),
         );
     }
+    let mut names = HashSet::new();
+    items.retain(|item| names.insert(item.name));
     (!items.is_empty()).then_some(Suggestions {
         range: start..end,
         items,
@@ -115,6 +117,13 @@ fn context(source: &str, string_start: usize, previous: &VecDeque<Token<'_>>) ->
         name = recent.next()?.text;
     }
     let before_name = recent.next().map(|token| token.text);
+    if last == ","
+        && before_name == Some("(")
+        && recent.next().is_some_and(|token| token.text == "keybind")
+        && recent.next().is_some_and(|token| token.text == ":")
+    {
+        return Some(false);
+    }
     if last == "(" && matches!(name, "hotkey" | "press") {
         let global = match before_name {
             Some(".") => recent.next().is_some_and(|token| token.text == "_G"),

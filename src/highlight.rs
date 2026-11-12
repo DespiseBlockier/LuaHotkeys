@@ -41,7 +41,11 @@ pub fn tokens(source: &str) -> impl Iterator<Item = (usize, usize, u32)> + '_ {
                 }
             }
             Kind::Symbol if matches!(token.text, "." | ":") => {
-                member_of = Some(if token.text == "." { library } else { None });
+                member_of = Some(if token.text == "." || library == Some("gui") {
+                    library
+                } else {
+                    None
+                });
                 library = None;
                 return None;
             }

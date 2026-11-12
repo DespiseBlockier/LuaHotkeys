@@ -12,7 +12,7 @@ use mlua::{Error, Function, Lua, RegistryKey, String as LuaString, Value, Variad
 use crate::linux as platform;
 #[cfg(windows)]
 use crate::worker as platform;
-use crate::{script_types, shortcut};
+use crate::{macro_gui::Gui, script_types, shortcut};
 
 pub type Output = fn(char, &str);
 
@@ -33,14 +33,14 @@ impl Binding {
     }
 }
 
-fn strict_text(value: Value) -> mlua::Result<LuaString> {
+pub(crate) fn strict_text(value: Value) -> mlua::Result<LuaString> {
     match value {
         Value::String(text) => Ok(text),
         _ => Err(Error::runtime("Expected a string.")),
     }
 }
 
-fn integer(value: Value) -> mlua::Result<i32> {
+pub(crate) fn integer(value: Value) -> mlua::Result<i32> {
     let value = match value {
         Value::Integer(value) => value as f64,
         Value::Number(value) => value,
@@ -56,6 +56,8 @@ fn integer(value: Value) -> mlua::Result<i32> {
 pub fn run(source: &str, name: &str, output: Output) -> mlua::Result<()> {
     // Macros are local scripts and retain the full Lua 5.1 library in their own process.
     let lua = unsafe { Lua::unsafe_new() };
+    let gui = Gui::default();
+    gui.install(&lua)?;
     let globals = lua.globals();
     let bindings = Rc::new(RefCell::new(Vec::<Binding>::new()));
     let unique = Rc::new(RefCell::new(HashSet::new()));
@@ -170,6 +172,8 @@ pub fn run(source: &str, name: &str, output: Output) -> mlua::Result<()> {
     .call::<()>(write)?;
     script_types::compile(&lua, source, name)?.call::<()>(())?;
     loading.set(false);
+    gui.start();
+    gui.dispatch(&lua, output);
     let bindings = bindings.borrow();
-    platform::listen(&lua, &bindings, output)
+    platform::listen(&lua, &bindings, output, &gui)
 }

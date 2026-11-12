@@ -1,0 +1,44 @@
+local window = gui:window("Macro controls")
+local status = window:label("Ready")
+local message = window:input("Message", "Hello from LuaHotkeys")
+local delay = window:slider("Delay (ms)", 0, 1000, 250)
+local enabled = window:toggle("Enable shortcut", true)
+local ending = window:keybind("Key after message", "Enter")
+local preview = window:button("Preview message")
+
+preview.pressed:connect(function()
+    status:set("Preview written to the log")
+    log(message:get())
+end)
+
+preview.hovered:connect(function()
+    status:set("Click to preview the current message")
+end)
+
+preview.unhovered:connect(function()
+    status:set("Ready")
+end)
+
+delay.changed:connect(function(value)
+    status:set("Delay set to " .. value .. " ms")
+end)
+
+enabled.changed:connect(function(value)
+    status:set(value and "Shortcut enabled" or "Shortcut disabled")
+end)
+
+ending.changed:connect(function(combo)
+    status:set(combo and ("Ending key set to " .. combo) or "Ending key cleared")
+end)
+
+local trigger = "Ctrl+Alt+J"
+hotkey(trigger, function()
+    if enabled:get() then
+        sleep(delay:get())
+        type_text(message:get())
+        local combo = ending:get()
+        if combo and combo ~= trigger then
+            press(combo)
+        end
+    end
+end)

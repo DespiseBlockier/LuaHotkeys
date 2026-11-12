@@ -40,6 +40,8 @@ Click **Docs** to browse the offline LuaHotkeys reference by category. Each func
 
 The editor suggests Lua keywords and functions as you type. Use **Ctrl+Space** to open suggestions on demand, the arrow keys to select, and **Tab** or **Enter** to insert. **Escape** closes the list.
 
+With the suggestion list closed, **Tab** indents to four-space stops and **Shift+Tab** dedents. **Enter** follows the current Lua scope.
+
 Function completions add parentheses and place the caret inside. For example, completing `hotkey` inserts `hotkey()`. Completion also recognizes Lua library members such as `math.sqrt` and suggests block templates in code.
 
 Inside a shortcut string in `hotkey`, `press`, or a local `Combo` assignment, completion suggests valid modifiers and keys for the current `+`-separated part. Open **Docs → Types → Combo** for all supported keys, aliases, and registration limits.
@@ -58,6 +60,12 @@ end)
 ```
 
 Annotations and aliases are erased before the entry script runs in Lua 5.1. API functions validate arguments at runtime. Modules loaded by Lua's `require` use standard Lua 5.1 syntax.
+
+## Macro windows
+
+Use `gui:window("Macro controls")` for an ordinary window or `defineGui("Imgui")` to use Dear ImGui. Both engines provide buttons, hover events, sliders, toggles, labels, text fields, and keybind pickers. Connect Lua callbacks to each control's signals.
+
+Open **Docs → Macro windows** in the editor or see the [GUI reference and examples](packaging/Gui.md).
 
 ## Lua functions
 
@@ -82,7 +90,7 @@ end)
 | `run(program, ...)` | Opens an app, file, or URL. Pass command-line arguments as separate strings. |
 | `log(...)` or `print(...)` | Writes values to the Activity panel. |
 
-Key names are case-insensitive. Modifiers include `Ctrl`, `Alt`, `Shift`, and `Win`. Use letters, digits, function keys, and names such as `Tab`, `Esc`, `Backspace`, `Left`, and `PageDown`. Choose a different combination if the Activity panel reports that Windows or another app already registered it. Input goes to the focused window and is subject to Windows privilege restrictions.
+Key names are case-insensitive. Modifiers include `Ctrl`, `Alt`, `Shift`, and `Win`. Main keys include punctuation such as `Backslash`, `Hash`, and `Plus`, numpad operators such as `NumPadEnter`, and standalone keys such as `Win`, `Pause`, and `ScrollLock`. Use `press("Win")` to send the left Windows key. Choose a different combination if the Activity panel reports that Windows or another app already registered it. Input goes to the focused window and uses the current keyboard layout.
 
 ## Build from source
 

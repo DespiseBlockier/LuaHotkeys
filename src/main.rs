@@ -20,6 +20,7 @@ mod input;
 mod linux;
 #[cfg(windows)]
 mod lua_syntax;
+mod macro_gui;
 mod runtime;
 mod script_types;
 mod shortcut;

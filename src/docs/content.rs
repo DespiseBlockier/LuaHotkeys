@@ -22,6 +22,8 @@ const STARTER: &str = r#"hotkey("Ctrl+Alt+J", function()
     press("Enter")
 end)"#;
 
+const MACRO_GUI: &str = include_str!("../../packaging/macro-gui.lhk");
+
 pub const CATEGORIES: &[Category] = &[
     Category {
         name: "Hotkeys",
@@ -125,6 +127,175 @@ pub const CATEGORIES: &[Category] = &[
             },
         ],
     },
+    Category {
+        name: "Macro windows",
+        description: "Build a window with native controls, or choose the Dear ImGui engine. Add controls when your script starts and connect Lua functions to their signals. Global hotkeys keep working while a macro window is open.",
+        functions: &[
+            Function {
+                name: "defineGui",
+                description: "Chooses the Basic or Imgui engine. Basic uses ordinary system windows and is also available as the global gui. Imgui uses Dear ImGui with a draggable title bar, a minimize button, and a fixed size. The window options table accepts width, height, visible, and theme. Theme colors use #RRGGBB. Set header, background, control, accent, and text independently, and set rounding from 0 to 32.",
+                parameters: &[("engine: \"Basic\" | \"Imgui\"", "The window engine. Names are case-insensitive.")],
+                returns: Some("An engine with the window method."),
+                example: r##"local engine = defineGui("Imgui")
+local window = engine:window("Macro controls", {
+    width = 460,
+    height = 320,
+    theme = {
+        header = "#243956",
+        background = "#131C2B",
+        accent = "#74B4FF",
+        rounding = 14,
+    },
+})
+window:label("Dear ImGui is running")"##,
+            },
+            Function {
+                name: "gui:window",
+                description: "Declares one macro window for the script. Add its controls at startup. Use show(), hide(), or close() in a callback. Connect to closed to run a function when the window closes. Closing the window leaves registered hotkeys running.",
+                parameters: &[
+                    ("title: string", "Title shown in the system window."),
+                    ("options: (boolean | table)?", "Pass false to open the window later with show(). The Imgui engine also accepts an options table. See defineGui for a size and theme example."),
+                ],
+                returns: Some("The macro window."),
+                example: MACRO_GUI,
+            },
+            Function {
+                name: "window:button",
+                description: "Adds a button. pressed fires on activation. hovered and unhovered fire when the pointer enters and leaves the button. Each signal connects with :connect(function).",
+                parameters: &[("text: string", "The caption on the button.")],
+                returns: Some("A button with pressed, hovered, and unhovered signals."),
+                example: r#"local window = gui:window("Macro controls")
+local button = window:button("Run macro")
+button.pressed:connect(function()
+    log("Run requested")
+end)
+button.hovered:connect(function() log("Pointer entered") end)
+button.unhovered:connect(function() log("Pointer left") end)"#,
+            },
+            Function {
+                name: "window:slider",
+                description: "Adds a whole-number slider. changed(value) fires for each different value, including while dragging. get() reads its value. set(value) updates it and fires changed if the value changes.",
+                parameters: &[
+                    ("label: string", "The caption beside the slider."),
+                    ("min: number", "The minimum whole number."),
+                    ("max: number", "The maximum whole number. It must exceed min by at most 2,147,483,647."),
+                    ("initial: number?", "The starting value. Defaults to min."),
+                ],
+                returns: Some("A slider with get(), set(value), and a changed signal."),
+                example: r#"local window = gui:window("Settings")
+local delay = window:slider("Delay (ms)", 0, 1000, 250)
+delay.changed:connect(function(value)
+    log("Delay changed to", value)
+end)"#,
+            },
+            Function {
+                name: "window:toggle",
+                description: "Adds a checkbox. changed(value) receives true or false when the checked state changes. Use get() or set(value) in a macro callback.",
+                parameters: &[
+                    ("label: string", "The caption beside the checkbox."),
+                    ("initial: boolean?", "The starting state. Defaults to false."),
+                ],
+                returns: Some("A toggle with get(), set(value), and a changed signal."),
+                example: r#"local window = gui:window("Settings")
+local enabled = window:toggle("Enabled", true)
+enabled.changed:connect(function(value) log("Enabled", value) end)"#,
+            },
+            Function {
+                name: "window:input",
+                description: "Adds a single-line text field. changed(text) fires as the text changes. Use get() or set(text) to read or replace its contents.",
+                parameters: &[
+                    ("label: string", "The caption for the field."),
+                    ("initial: string?", "The starting text. Defaults to an empty string."),
+                ],
+                returns: Some("A text field with get(), set(text), and a changed signal."),
+                example: r#"local window = gui:window("Message")
+local message = window:input("Text", "Hello")
+message.changed:connect(function(text) log(text) end)"#,
+            },
+            Function {
+                name: "window:label",
+                description: "Adds a line of text. Use set(text) to display status from a hotkey or a GUI callback.",
+                parameters: &[("text: string", "The initial label text.")],
+                returns: Some("A label with get() and set(text)."),
+                example: r#"local window = gui:window("Status")
+local status = window:label("Ready")
+local button = window:button("Update status")
+button.pressed:connect(function() status:set("Done") end)"#,
+            },
+            Function {
+                name: "window:keybind",
+                description: "Adds a keybind picker. Activate it, then press any supported Combo. Hold Win as a modifier or tap it to record it alone. Escape, a second click, or loss of focus cancels. changed(combo) receives the recorded combination or nil when cleared with set(nil). get() returns the current combo. Use it with press() to change the keys a macro sends.",
+                parameters: &[
+                    ("label: string", "The caption on the picker."),
+                    ("initial: Combo?", "The starting combo. Omit it to start unassigned."),
+                ],
+                returns: Some("A keybind picker with get(), set(combo), and a changed signal."),
+                example: r#"local window = gui:window("Choose what to send")
+local outgoing = window:keybind("Keys to send", "Ctrl+S")
+local trigger = "Ctrl+Alt+J"
+
+outgoing.changed:connect(function(combo)
+    log("Keys to send", combo)
+end)
+
+hotkey(trigger, function()
+    local combo = outgoing:get()
+    if combo and combo `= trigger then
+        press(combo)
+    end
+end)"#,
+            },
+            Function {
+                name: "signal:connect",
+                description: "Connects a Lua function to a signal. Connections run in registration order. pressed, hovered, unhovered, and closed pass no arguments. changed passes the new slider number, toggle boolean, field text, or keybind combo. A callback can update other controls. Errors appear in the script log.",
+                parameters: &[("callback: (...any) -> ()", "The function to run when this signal fires.")],
+                returns: None,
+                example: r#"local window = gui:window("Settings")
+local delay = window:slider("Delay", 0, 1000, 250)
+delay.changed:connect(function(value)
+    log("New delay", value)
+end)
+delay:set(500)"#,
+            },
+            Function {
+                name: "window:show",
+                description: "Shows a window created with visible set to false or hidden using hide(). Register a global hotkey at startup to show a window from the background.",
+                parameters: &[],
+                returns: None,
+                example: r#"local window = gui:window("Settings", false)
+window:label("Opened with a hotkey")
+local closed = false
+window.closed:connect(function() closed = true end)
+hotkey("Ctrl+Alt+M", function()
+    if not closed then window:show() end
+end)"#,
+            },
+            Function {
+                name: "window:hide",
+                description: "Hides the window and keeps its values, signals, and hotkeys active. The window can be shown again with show(). A hidden window still keeps the script running.",
+                parameters: &[],
+                returns: None,
+                example: r#"local window = gui:window("Settings")
+local hide = window:button("Hide settings")
+hide.pressed:connect(function() window:hide() end)
+local closed = false
+window.closed:connect(function() closed = true end)
+hotkey("Ctrl+Alt+M", function()
+    if not closed then window:show() end
+end)"#,
+            },
+            Function {
+                name: "window:close",
+                description: "Permanently closes the macro window and fires closed once. The Basic window's Close button has the same effect. A script with no hotkeys then exits. A script with hotkeys continues until you stop it.",
+                parameters: &[],
+                returns: None,
+                example: r#"local window = gui:window("Finished")
+local done = window:button("Close")
+window.closed:connect(function() log("Window closed") end)
+done.pressed:connect(function() window:close() end)"#,
+            },
+        ],
+    },
 ];
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -187,6 +358,7 @@ impl Page {
                 page.paragraph("Run the example, switch to a text editor, then press Ctrl+Alt+J.");
                 page.heading("Autocomplete");
                 page.paragraph("Type a function or keyword, or press Ctrl+Space. Use the arrow keys to select a suggestion, then press Tab or Enter. Escape closes the list.");
+                page.paragraph("Tab indents to four-space stops and Shift+Tab removes an indent. Enter follows the enclosing Lua block, including functions, loops, and tables.");
                 page.heading("Key combinations");
                 page.paragraph("Open Types → Combo for the full list of accepted keys, modifiers, and example shortcuts.");
                 page.heading("Explorer and updates");
@@ -299,7 +471,7 @@ impl Document {
         self.heading("Write a combination");
         self.paragraph("Write the modifiers first, then one main key. Separate the parts with +. Spaces around the parts and letter case are ignored. Ctrl+Alt+J and alt + control + j are the same combination. A single key such as Enter also works.");
         self.heading("Modifiers");
-        self.paragraph("Ctrl (or Control), Alt, Shift, and Win (or Windows). Each modifier may appear once, in any order. A modifier by itself is incomplete.");
+        self.paragraph("Ctrl (or Control), Alt, Shift, and Win (or Windows). Each modifier may appear once, in any order. Win alone means the left Windows or Super key. Use names such as RightWin and LeftCtrl to select a specific side.");
         self.heading("Accepted main keys");
         self.argument("Letters and digits", "A through Z and 0 through 9.");
         self.argument("Function keys", "F1 through F24. F12 can be sent with press, but Windows reserves it for the debugger and hotkey cannot register it.");
@@ -313,10 +485,10 @@ impl Document {
             self.argument(group, &names);
         }
         self.heading("Troubleshooting");
-        self.paragraph("Ctrl+S+T has two main keys. Ctrl++ is missing a supported main key. Use type_text for literal punctuation and click for mouse buttons.");
+        self.paragraph("Ctrl+S+T has two main keys. Ctrl++ and Ctrl+Plus both use plus as the main key. Use Backslash or an escaped backslash in a Lua string. Hash and # both name the number sign. Symbol shortcuts use the active keyboard layout.");
         self.paragraph("Windows and other apps can reserve shortcuts, especially combinations with Win. Choose another combination if Activity reports a registration error. For press, switch focus to the window you want to receive the keystroke.");
         self.heading("Autocomplete");
-        self.paragraph("Suggestions appear in quoted shortcuts passed to hotkey or press, and in local Combo assignments. Type Ct to get Ctrl, then type + to start the next part. Use the arrow keys and Tab to choose a suggestion.");
+        self.paragraph("Suggestions appear in quoted shortcuts passed to hotkey, press, or a keybind picker, and in local Combo assignments. Type Ct to get Ctrl, then type + to start the next part. Use the arrow keys and Tab to choose a suggestion.");
     }
 
     fn paragraph(&mut self, text: &str) {
@@ -399,7 +571,7 @@ mod tests {
                 .iter()
                 .map(|category| category.functions.len())
                 .sum::<usize>(),
-            10
+            22
         );
         for (group, category) in CATEGORIES.iter().enumerate() {
             let page = Page::Category(group);

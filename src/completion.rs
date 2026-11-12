@@ -51,7 +51,29 @@ const API: &[Item] = &[
     call("sleep", "(milliseconds: Milliseconds)"),
     call("run", "(program: string, ...: string)"),
     call("log", "(...: any)"),
+    call("defineGui", "(engine: \"Basic\" | \"Imgui\")"),
+    value("gui", "Basic GUI engine"),
 ];
+
+const ENGINE_METHODS: &[Item] = &[call(
+    "window",
+    "(title: string, options: (boolean | table)?)",
+)];
+const WINDOW_METHODS: &[Item] = &[
+    call("label", "(text: string)"),
+    call("button", "(text: string)"),
+    call(
+        "slider",
+        "(label: string, min: number, max: number, initial: number?)",
+    ),
+    call("toggle", "(label: string, initial: boolean?)"),
+    call("input", "(label: string, initial: string?)"),
+    call("keybind", "(label: string, initial: Combo?)"),
+    call("show", "()"),
+    call("hide", "()"),
+    call("close", "()"),
+];
+const SIGNAL_METHODS: &[Item] = &[call("connect", "(callback: (...any) -> ())")];
 
 const GLOBALS: &[Item] = &[
     call("assert", "(value, [message])"),
@@ -119,6 +141,7 @@ const OPERATORS: &[Item] = &[keyword("and"), keyword("or")];
 
 fn members(namespace: &str) -> &'static [Item] {
     match namespace {
+        "gui" => ENGINE_METHODS,
         "coroutine" => {
             const {
                 &[
@@ -284,6 +307,18 @@ fn global(name: &str) -> Option<&'static Item> {
 }
 
 pub fn signature(name: &str) -> Option<&'static str> {
+    if let Some((object, name)) = name.split_once(':') {
+        let methods = match object {
+            "gui" | "engine" => ENGINE_METHODS,
+            "window" => WINDOW_METHODS,
+            "signal" => SIGNAL_METHODS,
+            _ => return None,
+        };
+        return methods
+            .iter()
+            .find(|item| item.name == name)
+            .map(|item| item.detail);
+    }
     global(name)
         .filter(|item| item.style == Style::Call)
         .map(|item| item.detail)
@@ -331,7 +366,8 @@ pub fn suggest(source: &str, caret: usize, manual: bool) -> Option<Suggestions> 
     let mut blocks = Vec::new();
     for token in Tokens::new(source).take_while(|token| token.start <= caret) {
         if token.blocks_completion(caret) {
-            return combo::suggest(source, caret, token, &previous, manual);
+            return gui_engine_suggestions(source, caret, token, &previous)
+                .or_else(|| combo::suggest(source, caret, token, &previous, manual));
         }
         if token.kind == Kind::Number && token.start < caret && caret <= token.end {
             return None;
@@ -350,7 +386,23 @@ pub fn suggest(source: &str, caret: usize, manual: bool) -> Option<Suggestions> 
         return None;
     }
     let last = previous.back().map_or("", |token| token.text);
-    if prefix.is_empty() && !manual && last != "." {
+    if prefix.is_empty() && define_gui_argument(&previous) {
+        return Some(Suggestions {
+            range: start..end,
+            items: [r#""Basic""#, r#""Imgui""#]
+                .into_iter()
+                .map(|name| value(name, "GUI engine"))
+                .collect(),
+            expression: true,
+        });
+    }
+    let gui_method = last == ":"
+        && previous
+            .iter()
+            .rev()
+            .nth(1)
+            .is_some_and(|token| token.text == "gui");
+    if prefix.is_empty() && !manual && last != "." && !gui_method {
         return None;
     }
 
@@ -364,7 +416,9 @@ pub fn suggest(source: &str, caret: usize, manual: bool) -> Option<Suggestions> 
     let mut candidates = Vec::new();
     let mut expression = false;
 
-    if last == "." {
+    if gui_method {
+        candidates.extend_from_slice(ENGINE_METHODS);
+    } else if last == "." {
         let namespace = previous
             .iter()
             .rev()
@@ -374,7 +428,7 @@ pub fn suggest(source: &str, caret: usize, manual: bool) -> Option<Suggestions> 
         if namespace == "_G" {
             candidates.extend_from_slice(API);
             candidates.extend_from_slice(GLOBALS);
-        } else {
+        } else if namespace != "gui" {
             candidates.extend_from_slice(members(namespace));
         }
     } else if last == "local" {
@@ -437,6 +491,49 @@ pub fn suggest(source: &str, caret: usize, manual: bool) -> Option<Suggestions> 
         items: candidates,
         expression,
     })
+}
+
+fn gui_engine_suggestions(
+    source: &str,
+    caret: usize,
+    token: Token<'_>,
+    previous: &VecDeque<Token<'_>>,
+) -> Option<Suggestions> {
+    if token.kind != Kind::String
+        || !token.text.starts_with(['"', '\''])
+        || !define_gui_argument(previous)
+    {
+        return None;
+    }
+    let start = token.start + 1;
+    let end =
+        token.end - usize::from(token.text.len() > 1 && token.text.ends_with(&token.text[..1]));
+    let prefix = source.get(start..caret)?;
+    let items = ["Basic", "Imgui"]
+        .into_iter()
+        .filter(|name| {
+            name.get(..prefix.len())
+                .is_some_and(|part| part.eq_ignore_ascii_case(prefix))
+        })
+        .filter(|&name| name != &source[start..end])
+        .map(|name| value(name, "GUI engine"))
+        .collect::<Vec<_>>();
+    (!items.is_empty()).then_some(Suggestions {
+        range: start..end,
+        items,
+        expression: false,
+    })
+}
+
+fn define_gui_argument(previous: &VecDeque<Token<'_>>) -> bool {
+    let mut preceding = previous.iter().rev().map(|token| token.text);
+    preceding.next() == Some("(")
+        && preceding.next() == Some("defineGui")
+        && match preceding.next() {
+            Some(".") => preceding.next() == Some("_G"),
+            Some(":" | "function") => false,
+            _ => true,
+        }
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -607,6 +704,25 @@ mod tests {
         assert_eq!(
             completed("-- café 😀\nhotk", "-- café 😀\nhotk".len(), "hotkey"),
             "-- café 😀\nhotkey(|)"
+        );
+    }
+
+    #[test]
+    fn completes_gui_engine_and_picker_options_in_context() {
+        let source = "defineGui(";
+        assert_eq!(
+            completed(source, source.len(), r#""Basic""#),
+            r#"defineGui("Basic"|"#
+        );
+        let source = r#"defineGui("im")"#;
+        assert_eq!(
+            completed(source, source.len() - 2, "Imgui"),
+            r#"defineGui("Imgui|")"#
+        );
+        let source = r#"window:keybind("Send", "Ctrl+Bac")"#;
+        assert_eq!(
+            completed(source, source.len() - 2, "Backslash"),
+            r#"window:keybind("Send", "Ctrl+Backslash|")"#
         );
     }
 
