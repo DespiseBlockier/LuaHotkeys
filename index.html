@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Install LuaHotkeys on Linux</title>
+<style>
+body { max-width: 46rem; margin: 3rem auto; padding: 0 1rem; font: 1rem/1.6 system-ui, sans-serif; color-scheme: light dark; }
+pre { padding: .75rem 1rem; background: Canvas; border: 1px solid GrayText; overflow: auto; }
+code { overflow-wrap: anywhere; }
+</style>
+</head>
+<body>
+<main>
+<h1>Install LuaHotkeys on Linux</h1>
+<p>The x86-64 terminal runner supports Arch Linux and openSUSE Tumbleweed. Global hotkeys and input automation require an X11 session.</p>
+<p><a href="install-linux.sh" download>Download the Linux installer</a>, then run it from your download folder. It registers the signed repository and installs LuaHotkeys using your package manager.</p>
+<pre><code>sh ./install-linux.sh</code></pre>
+<p>To add the repository first, run the installer with <code>--repo-only</code>. Then install by name.</p>
+<h2>Arch Linux</h2>
+<pre><code>sudo pacman -S luahotkeys</code></pre>
+<h2>openSUSE Tumbleweed</h2>
+<pre><code>sudo zypper install luahotkeys</code></pre>
+<h2>Run a script</h2>
+<pre><code>luahotkeys --run ./my-script.lhk</code></pre>
+<p><a href="luahotkeys.asc" download>Repository signing key</a><br>
+<code>65E020859EBA2286077FFC5CF249A7585BC995B5</code></p>
+<p><a href="https://github.com/DespiseBlockier/LuaHotkeys/releases">LuaHotkeys releases</a></p>
+</main>
+</body>
+</html>
