@@ -7,6 +7,7 @@ pub enum Key {
     Symbol(u8),
     Modifier(ModifierKey),
     NumpadOperator(NumpadOperator),
+    Mouse(MouseButton),
     Enter,
     Escape,
     Space,
@@ -32,6 +33,13 @@ pub enum Key {
     VolumeDown,
     VolumeMute,
     MediaPlayPause,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum MouseButton {
+    Left,
+    Right,
+    Middle,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -185,6 +193,14 @@ pub const NAMED_KEYS: &[KeyGroup] = &[
             ("MediaPlayPause", Key::MediaPlayPause),
         ],
     ),
+    (
+        "Mouse buttons (press only)",
+        &[
+            ("MouseLeft", Key::Mouse(MouseButton::Left)),
+            ("MouseRight", Key::Mouse(MouseButton::Right)),
+            ("MouseMiddle", Key::Mouse(MouseButton::Middle)),
+        ],
+    ),
 ];
 
 // Keep the modifier bits stable for the Win32 RegisterHotKey interface.
@@ -320,5 +336,16 @@ mod tests {
                 assert_eq!(parse(&combo.to_string()), Ok(combo));
             }
         }
+    }
+
+    #[test]
+    fn mouse_combinations_preserve_modifiers_and_arrow_keys() {
+        let combo = parse("shift + ctrl + mOuSeMiDdLe").unwrap();
+        assert_eq!(combo.modifiers, CONTROL | SHIFT);
+        assert_eq!(combo.key, Key::Mouse(MouseButton::Middle));
+        assert_eq!(combo.to_string(), "Ctrl+Shift+MouseMiddle");
+        assert_eq!(parse("Left").unwrap().key, Key::Left);
+        assert_eq!(parse("Right").unwrap().key, Key::Right);
+        assert!(parse("MouseLeft+J").is_err());
     }
 }

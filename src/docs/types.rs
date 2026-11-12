@@ -20,11 +20,11 @@ pub const TYPES: &[TypePage] = &[
     TypePage {
         name: "Combo",
         definition: "type Combo = string",
-        description: "A string that names one key, optionally preceded by modifiers. hotkey listens for the combination globally. press sends it to the focused window.",
+        description: "A string that names one keyboard key or mouse button, optionally preceded by modifiers. hotkey listens for keyboard combinations globally. press sends keys to the focused window and clicks mouse buttons at the pointer.",
         example: r#"local shortcut: Combo = "Ctrl+Alt+J"
 
 hotkey(shortcut, function()
-    type_text("Shortcut pressed")
+    press("Ctrl+MouseLeft")
 end)"#,
     },
     TypePage {
@@ -41,7 +41,7 @@ hotkey("Ctrl+Alt+J", callback)"#,
     TypePage {
         name: "MouseButton",
         definition: r#"type MouseButton = "left" | "right" | "middle""#,
-        description: "A string naming a mouse button. click accepts left, right, or middle, ignoring case. Pass nil or omit the argument for a left click.",
+        description: "The button name used by the older click function. click accepts left, right, or middle, ignoring case. Pass nil or omit the argument for a left click. Use Combo with press for mouse buttons in new scripts.",
         example: r#"local button: MouseButton = "right"
 click(button)"#,
     },

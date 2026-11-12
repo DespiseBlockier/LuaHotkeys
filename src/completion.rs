@@ -1031,4 +1031,30 @@ mod tests {
             assert!(suggest(source, source.len(), false).is_none(), "{source}");
         }
     }
+
+    #[test]
+    fn suggests_mouse_buttons_for_press_and_combo_values() {
+        let source = r#"press("mo")"#;
+        let list = suggest(source, source.len() - 2, false).unwrap();
+        assert_eq!(
+            list.items
+                .iter()
+                .map(|item| item.name.as_ref())
+                .collect::<Vec<_>>(),
+            ["MouseLeft", "MouseRight", "MouseMiddle"]
+        );
+        assert_eq!(
+            completed(source, source.len() - 2, "MouseRight"),
+            r#"press("MouseRight|")"#
+        );
+
+        let source = r#"local action: Combo = "Ctrl+mOu""#;
+        assert_eq!(
+            completed(source, source.len() - 1, "MouseMiddle"),
+            r#"local action: Combo = "Ctrl+MouseMiddle|""#
+        );
+
+        let source = r#"hotkey("mo", callback)"#;
+        assert!(suggest(source, r#"hotkey("mo"#.len(), false).is_none());
+    }
 }

@@ -94,6 +94,11 @@ pub fn run(source: &str, name: &str, output: Output) -> mlua::Result<()> {
                 }
                 let name = strict_text(name)?.to_str()?.to_owned();
                 let combo = shortcut::parse(&name).map_err(Error::runtime)?;
+                if matches!(combo.key, shortcut::Key::Mouse(_)) {
+                    return Err(Error::runtime(
+                        "Mouse buttons can be sent with press(). Use a keyboard combo for hotkey().",
+                    ));
+                }
                 let trigger = HotkeyTrigger::from_lua(trigger)?;
                 platform::validate_hotkey(combo).map_err(Error::runtime)?;
                 if !seen.borrow_mut().insert(combo) {
@@ -126,11 +131,27 @@ pub fn run(source: &str, name: &str, output: Output) -> mlua::Result<()> {
     globals.set(
         "click",
         lua.create_function(|_, value: Value| {
-            let button = match value {
-                Value::Nil => "left".to_owned(),
-                value => strict_text(value)?.to_str()?.to_owned(),
+            use shortcut::MouseButton;
+
+            let button = if value.is_nil() {
+                MouseButton::Left
+            } else {
+                match strict_text(value)?.to_str()?.to_ascii_lowercase().as_str() {
+                    "left" => MouseButton::Left,
+                    "right" => MouseButton::Right,
+                    "middle" => MouseButton::Middle,
+                    _ => {
+                        return Err(Error::runtime(
+                            "Mouse button must be left, right or middle.",
+                        ))
+                    }
+                }
             };
-            platform::click(&button).map_err(Error::external)
+            platform::press(shortcut::Combination {
+                modifiers: 0,
+                key: shortcut::Key::Mouse(button),
+            })
+            .map_err(Error::external)
         })?,
     )?;
     globals.set(

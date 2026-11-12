@@ -15,7 +15,7 @@ use mlua::Lua;
 use crate::{
     macro_gui::{immediate, tk, Engine, Gui},
     runtime::{self, Binding, Output},
-    shortcut::{Combination, ALT, CONTROL, MODIFIERS, NAMED_KEYS, SHIFT, SUPER},
+    shortcut::{Combination, Key, ALT, CONTROL, MODIFIERS, NAMED_KEYS, SHIFT, SUPER},
 };
 
 const HELP: &str = "Usage: luahotkeys [--run] <script.lhk>\n       luahotkeys --keys\n       luahotkeys --version\n\nRun a LuaHotkeys script on X11. Press Ctrl+C to stop a running script.";
@@ -206,6 +206,11 @@ fn checked(output: ProcessOutput) -> io::Result<ProcessOutput> {
 }
 
 pub fn press(combo: Combination) -> io::Result<()> {
+    if let Key::Mouse(button) = combo.key {
+        require_x11()?;
+        return x11::click(button, combo.modifiers)
+            .map_err(|error| io::Error::other(error.to_string()));
+    }
     let mut keys = String::new();
     for (flag, name) in [
         (CONTROL, "ctrl"),
@@ -218,9 +223,8 @@ pub fn press(combo: Combination) -> io::Result<()> {
             keys.push('+');
         }
     }
-    let symbol = xkeysym::Keysym::new(x11::symbol(combo.key));
-    let name = symbol
-        .name()
+    let name = x11::symbol(combo.key)
+        .and_then(|symbol| xkeysym::Keysym::new(symbol).name())
         .ok_or_else(|| io::Error::other("No X11 name for that key."))?;
     if let Some(name) = name.strip_prefix("XF86XK_") {
         keys.push_str("XF86");
@@ -250,20 +254,6 @@ pub fn type_text(text: &str) -> io::Result<()> {
         .write_all(text.as_bytes());
     checked(process.wait_with_output()?)?;
     result
-}
-
-pub fn click(button: &str) -> io::Result<()> {
-    let number = match button.to_ascii_lowercase().as_str() {
-        "left" => "1",
-        "middle" => "2",
-        "right" => "3",
-        _ => {
-            return Err(io::Error::other(
-                "Mouse button must be left, right or middle.",
-            ))
-        }
-    };
-    xdotool(&["click", number]).map(|_| ())
 }
 
 pub fn move_mouse(x: i32, y: i32) -> io::Result<()> {

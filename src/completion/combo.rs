@@ -3,7 +3,7 @@ use std::collections::{HashSet, VecDeque};
 use super::{value, Access, Suggestions};
 use crate::{
     lua_syntax::{Kind, Token, Tokens},
-    shortcut::{modifier_flag, MODIFIERS, NAMED_KEYS},
+    shortcut::{modifier_flag, Key, MODIFIERS, NAMED_KEYS},
 };
 
 const ALPHANUMERIC: &[&str] = &[
@@ -91,13 +91,21 @@ pub(super) fn suggest(
                 .chain(FUNCTION_KEYS)
                 .chain(NUMBER_PAD)
                 .copied()
-                .chain(
-                    NAMED_KEYS
-                        .iter()
-                        .flat_map(|(_, keys)| keys.iter().map(|&(name, _)| name)),
-                )
                 .filter(|&name| matches(name) && !(registering && name == "F12"))
                 .map(|name| value(name, "Key")),
+        );
+        items.extend(
+            NAMED_KEYS
+                .iter()
+                .flat_map(|(_, keys)| *keys)
+                .filter_map(|&(name, key)| {
+                    let detail = match key {
+                        Key::Mouse(_) if registering => return None,
+                        Key::Mouse(_) => "Mouse button",
+                        _ => "Key",
+                    };
+                    matches(name).then_some(value(name, detail))
+                }),
         );
     }
     let mut names = HashSet::new();

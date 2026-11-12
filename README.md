@@ -98,8 +98,8 @@ end)
 | --- | --- |
 | `hotkey(combo, callback)` | Declares a system-wide shortcut at script startup. |
 | `type_text(text)` | Types UTF-8 text into the focused window. Line breaks send Enter. |
-| `press(combo)` | Sends a key or a combination such as `"Ctrl+S"` or `"Enter"`. |
-| `click([button])` | Clicks at the pointer. Use `"left"`, `"right"`, or `"middle"`. The default is left. |
+| `press(combo)` | Sends a key such as `"Ctrl+S"` or clicks at the pointer with `"MouseLeft"`, `"MouseRight"`, or `"MouseMiddle"`. Modifiers also work with mouse buttons, as in `"Ctrl+MouseLeft"`. |
+| `click([button])` | Older syntax for existing scripts. Use `"left"`, `"right"`, or `"middle"`. The default is left. |
 | `move_mouse(x, y)` | Moves the pointer to desktop coordinates in pixels. |
 | `mouse_pos()` | Returns the pointer's x and y coordinates. |
 | `sleep(ms)` | Pauses the script for an integer number of milliseconds. |
@@ -107,6 +107,8 @@ end)
 | `log(...)` or `print(...)` | Writes values to the Activity panel. |
 
 Key names are case-insensitive. Modifiers include `Ctrl`, `Alt`, `Shift`, and `Win`. Main keys include punctuation such as `Backslash`, `Hash`, and `Plus`, numpad operators such as `NumPadEnter`, and standalone keys such as `Win`, `Pause`, and `ScrollLock`. Use `press("Win")` to send the left Windows key. Choose a different combination if the Activity panel reports that Windows or another app already registered it. Input goes to the focused window and uses the current keyboard layout.
+
+Mouse button combos work with `press()`. Type `press("mo` to see the three mouse button suggestions. `hotkey()` registers keyboard combos.
 
 ## Build from source
 

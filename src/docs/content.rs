@@ -33,7 +33,7 @@ pub const CATEGORIES: &[Category] = &[
             name: "hotkey",
             description: "Registers a global key combination at script startup. The callback normally runs when you release the shortcut. Pass \"press\" as the third argument to run it as soon as you complete the combination. A held shortcut fires once.",
             parameters: &[
-                ("combo: Combo", "The key to listen for. See Types → Combo for every supported key."),
+                ("combo: Combo", "The keyboard key to listen for. See Types → Combo for the key names."),
                 ("callback: HotkeyCallback", "The Lua function to run."),
                 ("trigger: string?", "Use \"release\" (the default) or \"press\". Modifiers can still be held during a press callback."),
             ],
@@ -42,8 +42,8 @@ pub const CATEGORIES: &[Category] = &[
         }],
     },
     Category {
-        name: "Keyboard",
-        description: "Send literal text or keyboard shortcuts to the focused window.",
+        name: "Keyboard and clicks",
+        description: "Send text and keystrokes to the focused window or click at the pointer.",
         functions: &[
             Function {
                 name: "type_text",
@@ -54,10 +54,12 @@ pub const CATEGORIES: &[Category] = &[
             },
             Function {
                 name: "press",
-                description: "Sends one key or a key combination to the focused window.",
-                parameters: &[("combo: Combo", "The key to send. See Types → Combo for every supported key.")],
+                description: "Sends one keyboard key to the focused window or clicks a mouse button at the pointer. Either can be combined with modifiers.",
+                parameters: &[("combo: Combo", "Use a key name or MouseLeft, MouseRight, or MouseMiddle. Separate modifiers with +.")],
                 returns: None,
-                example: r#"press("Ctrl+S")"#,
+                example: r#"press("Ctrl+S")
+press("MouseRight")
+press("Ctrl+MouseLeft")"#,
             },
         ],
     },
@@ -67,7 +69,7 @@ pub const CATEGORIES: &[Category] = &[
         functions: &[
             Function {
                 name: "click",
-                description: "Clicks a button at the current pointer position.",
+                description: "Clicks at the pointer. Existing scripts can keep using click. Use press with a mouse Combo in new scripts.",
                 parameters: &[("button: MouseButton?", "Use left, right, or middle. Omit the argument for a left click.")],
                 returns: None,
                 example: r#"click("right")"#,
@@ -271,7 +273,7 @@ button.pressed:connect(function() status:set("Done") end)"#,
             },
             Function {
                 name: "window:keybind",
-                description: "Adds a keybind picker. Activate it, then press any supported Combo. Hold Win as a modifier or tap it to record it alone. Escape, a second click, or loss of focus cancels. changed(combo) receives the recorded combination or nil when cleared with set(nil). get() returns the current combo. Use it with press() to change the keys a macro sends.",
+                description: "Adds a keybind picker. Activate it, then press a supported keyboard combination. Hold Win as a modifier or tap it to record it alone. Escape, a second click, or loss of focus cancels. changed(combo) receives the recorded combination or nil when cleared with set(nil). get() returns the current combo. Use it with press() to change the keys a macro sends.",
                 parameters: &[
                     ("label: string", "The caption on the picker."),
                     ("initial: Combo?", "The starting combo. Omit it to start unassigned."),
@@ -516,7 +518,7 @@ impl Document {
 
     fn combo(&mut self) {
         self.heading("Write a combination");
-        self.paragraph("Write the modifiers first, then one main key. Separate the parts with +. Spaces around the parts and letter case are ignored. Ctrl+Alt+J and alt + control + j are the same combination. A single key such as Enter also works.");
+        self.paragraph("Write the modifiers first, then one main key or mouse button. Separate the parts with +. Spaces around the parts and letter case are ignored. Ctrl+Alt+J and alt + control + j are the same combination. A single key such as Enter also works.");
         self.heading("Modifiers");
         self.paragraph("Ctrl (or Control), Alt, Shift, and Win (or Windows). Each modifier may appear once, in any order. Win alone means the left Windows or Super key. Use names such as RightWin and LeftCtrl to select a specific side.");
         self.heading("Accepted main keys");
@@ -531,6 +533,7 @@ impl Document {
                 .join(", ");
             self.argument(group, &names);
         }
+        self.paragraph("Use press with MouseLeft, MouseRight, or MouseMiddle to click at the pointer. Ctrl+MouseLeft holds Ctrl during the click. hotkey registers keyboard combinations.");
         self.heading("Troubleshooting");
         self.paragraph("Ctrl+S+T has two main keys. Ctrl++ and Ctrl+Plus both use plus as the main key. Use Backslash or an escaped backslash in a Lua string. Hash and # both name the number sign. Symbol shortcuts use the active keyboard layout.");
         self.paragraph("Windows and other apps can reserve shortcuts, especially combinations with Win. Choose another combination if Activity reports a registration error. For press, switch focus to the window you want to receive the keystroke.");

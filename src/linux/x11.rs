@@ -11,7 +11,11 @@ use x11rb::{
     protocol::{
         xinput::{self, ConnectionExt as _},
         xkb::{self, ConnectionExt as _},
-        xproto::{ConnectionExt as _, GrabMode, Keycode, ModMask},
+        xproto::{
+            ConnectionExt as _, GrabMode, Keycode, ModMask, BUTTON_PRESS_EVENT,
+            BUTTON_RELEASE_EVENT, KEY_PRESS_EVENT, KEY_RELEASE_EVENT,
+        },
+        xtest::ConnectionExt as _,
         Event,
     },
     rust_connection::RustConnection,
@@ -22,17 +26,19 @@ use crate::{
     macro_gui::Gui,
     runtime::{Binding, HotkeyTrigger, Output},
     shortcut::{
-        Combination, Key, ModifierKey, NumpadOperator, ALT, CONTROL, NAMED_KEYS, SHIFT, SUPER,
+        Combination, Key, ModifierKey, MouseButton, NumpadOperator, ALT, CONTROL, NAMED_KEYS,
+        SHIFT, SUPER,
     },
 };
 
-pub(super) fn symbol(key: Key) -> u32 {
-    match key {
+pub(super) fn symbol(key: Key) -> Option<u32> {
+    Some(match key {
         Key::Letter(letter) => u32::from(letter),
         Key::Digit(digit) => u32::from(digit),
         Key::Function(n) => sym::F1 + u32::from(n) - 1,
         Key::Numpad(n) => sym::KP_0 + u32::from(n),
         Key::Symbol(symbol) => u32::from(symbol),
+        Key::Mouse(_) => return None,
         Key::Modifier(key) => match key {
             ModifierKey::LeftCtrl => sym::Control_L,
             ModifierKey::RightCtrl => sym::Control_R,
@@ -76,7 +82,7 @@ pub(super) fn symbol(key: Key) -> u32 {
         Key::VolumeDown => sym::XF86_AudioLowerVolume,
         Key::VolumeMute => sym::XF86_AudioMute,
         Key::MediaPlayPause => sym::XF86_AudioPlay,
-    }
+    })
 }
 
 pub(crate) struct Keyboard {
@@ -108,7 +114,7 @@ impl Keyboard {
                 _ => NAMED_KEYS
                     .iter()
                     .flat_map(|(_, keys)| *keys)
-                    .find_map(|&(_, key)| (symbol(key) == code).then_some(key)),
+                    .find_map(|&(_, key)| (symbol(key) == Some(code)).then_some(key)),
             })?;
         let win = matches!(
             key,
@@ -178,7 +184,9 @@ impl Keyboard {
         let resolved = if let Key::Symbol(symbol) = combo.key {
             self.symbol_binding(symbol)
         } else {
-            self.code(symbol(combo.key)).map(|code| (code, 0))
+            symbol(combo.key)
+                .and_then(|symbol| self.code(symbol))
+                .map(|code| (code, 0))
         };
         let (code, mut mask) = resolved.ok_or_else(|| {
             io::Error::other("The key is absent from the current X11 keyboard map.")
@@ -230,6 +238,45 @@ const MODIFIER_KEYSYMS: [(u32, &[u32], &str); 4] = [
     (SHIFT, &[sym::Shift_L, sym::Shift_R], "Shift"),
     (SUPER, &[sym::Super_L, sym::Super_R], "Win"),
 ];
+
+pub(super) fn click(button: MouseButton, modifiers: u32) -> Result<(), Box<dyn Error>> {
+    let (connection, _) = x11rb::connect(None)?;
+    let button = match button {
+        MouseButton::Left => 1,
+        MouseButton::Middle => 2,
+        MouseButton::Right => 3,
+    };
+    let mut held = Vec::new();
+    if modifiers != 0 {
+        let keyboard = Keyboard::new(&connection)?;
+        let pressed = connection.query_keymap()?.reply()?.keys;
+        for (flag, names, label) in MODIFIER_KEYSYMS {
+            if modifiers & flag == 0 {
+                continue;
+            }
+            let mut codes = names.iter().filter_map(|&name| keyboard.code(name));
+            let first = codes.next().ok_or_else(|| {
+                io::Error::other(format!("{label} is absent from the X11 keyboard map."))
+            })?;
+            let is_down = |code: u8| pressed[usize::from(code / 8)] & (1 << (code % 8)) != 0;
+            if !std::iter::once(first).chain(codes).any(is_down) {
+                held.push(first);
+            }
+        }
+    }
+    let events = held
+        .iter()
+        .map(|&code| (KEY_PRESS_EVENT, code))
+        .chain([(BUTTON_PRESS_EVENT, button), (BUTTON_RELEASE_EVENT, button)])
+        .chain(held.iter().rev().map(|&code| (KEY_RELEASE_EVENT, code)));
+    let pending = events
+        .map(|(event, detail)| connection.xtest_fake_input(event, detail, 0, 0, 0, 0, 0))
+        .collect::<Result<Vec<_>, _>>()?;
+    for request in pending {
+        request.check()?;
+    }
+    Ok(())
+}
 
 pub(super) struct Hotkeys<'a> {
     connection: RustConnection,

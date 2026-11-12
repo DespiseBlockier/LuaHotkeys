@@ -32,7 +32,7 @@ luahotkeys --run ./my-script.lhk
 
 Keep the runner open for global shortcuts. Press Ctrl+C in the terminal to stop it and release its shortcuts. A script without hotkeys exits when it finishes. Terminal output contains the messages from `log` and `print`.
 
-`hotkey`, `press`, `type_text`, `click`, `move_mouse`, and `mouse_pos` use X11. Type and pointer actions use `xdotool`. When the desktop is running Wayland, select an X11 session at the login screen to use those functions. Keyboard layouts, desktop shortcuts, and available keysyms affect which combinations can bind. `run` launches a Linux program with separate arguments or opens a local document or URL through `xdg-open`. Replace Windows executable names in scripts with Linux equivalents.
+`hotkey`, `press`, `type_text`, `click`, `move_mouse`, and `mouse_pos` use X11. Keyboard output and pointer positioning use `xdotool`. Mouse buttons sent with `press` use X11's XTEST extension. When the desktop is running Wayland, select an X11 session at the login screen to use those functions. Keyboard layouts, desktop shortcuts, and available keysyms affect which combinations can bind. `run` launches a Linux program with separate arguments or opens a local document or URL through `xdg-open`. Replace Windows executable names in scripts with Linux equivalents.
 
 ## Build the runner
 

@@ -25,7 +25,7 @@ use crate::{
     shortcut::{Combination, Key},
 };
 
-pub use crate::input::{click, mouse_pos, move_mouse, press, type_text};
+pub use crate::input::{mouse_pos, move_mouse, press, type_text};
 
 fn message(kind: char, content: &str) {
     let end = content

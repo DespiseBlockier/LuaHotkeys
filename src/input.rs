@@ -23,7 +23,8 @@ use windows_sys::Win32::{
 use crate::{
     runtime::HotkeyTrigger,
     shortcut::{
-        Combination, Key, ModifierKey, NumpadOperator, ALT, CONTROL, NAMED_KEYS, SHIFT, SUPER,
+        Combination, Key, ModifierKey, MouseButton, NumpadOperator, ALT, CONTROL, NAMED_KEYS,
+        SHIFT, SUPER,
     },
 };
 
@@ -33,7 +34,7 @@ fn virtual_key(key: Key) -> Option<u16> {
         Key::Digit(digit) => u16::from(digit),
         Key::Function(number) => VK_F1 + number - 1,
         Key::Numpad(number) => VK_NUMPAD0 + number,
-        Key::Symbol(_) => return None,
+        Key::Symbol(_) | Key::Mouse(_) => return None,
         Key::Modifier(key) => match key {
             ModifierKey::LeftCtrl => VK_LCONTROL,
             ModifierKey::RightCtrl => VK_RCONTROL,
@@ -100,7 +101,8 @@ fn resolve(mut combo: Combination) -> io::Result<(u16, Combination)> {
         }
         return Ok(((mapped as u16) & 0xff, combo));
     }
-    Ok((virtual_key(combo.key).expect("named virtual key"), combo))
+    let key = virtual_key(combo.key).ok_or_else(|| io::Error::other("Expected a keyboard key."))?;
+    Ok((key, combo))
 }
 
 pub fn capture_key(code: u16, released: bool, extended: bool) -> Option<Combination> {
@@ -385,14 +387,23 @@ fn send(events: &[INPUT]) -> io::Result<()> {
 }
 
 pub fn press(combo: Combination) -> io::Result<()> {
-    let (key, combo) = resolve(combo)?;
+    let (combo, action) = if let Key::Mouse(button) = combo.key {
+        (combo, mouse_click(button))
+    } else {
+        let (key, combo) = resolve(combo)?;
+        let flags = keypad_enter_flag(combo.key);
+        (
+            combo,
+            [
+                keyboard(key, 0, flags),
+                keyboard(key, 0, flags | KEYEVENTF_KEYUP),
+            ],
+        )
+    };
     let held: Vec<_> = modifiers(combo).filter(|key| !is_down(*key)).collect();
     let mut events = Vec::with_capacity(2 + held.len() * 2);
     events.extend(held.iter().map(|&key| keyboard(key, 0, 0)));
-    events.extend([
-        keyboard(key, 0, keypad_enter_flag(combo.key)),
-        keyboard(key, 0, keypad_enter_flag(combo.key) | KEYEVENTF_KEYUP),
-    ]);
+    events.extend(action);
     events.extend(
         held.iter()
             .rev()
@@ -429,16 +440,11 @@ pub fn type_text(text: &str) -> io::Result<()> {
     send(&events)
 }
 
-pub fn click(button: &str) -> io::Result<()> {
-    let down = match button.to_ascii_lowercase().as_str() {
-        "left" => MOUSEEVENTF_LEFTDOWN,
-        "right" => MOUSEEVENTF_RIGHTDOWN,
-        "middle" => MOUSEEVENTF_MIDDLEDOWN,
-        _ => {
-            return Err(io::Error::other(
-                "Mouse button must be left, right or middle.",
-            ))
-        }
+fn mouse_click(button: MouseButton) -> [INPUT; 2] {
+    let (down, up) = match button {
+        MouseButton::Left => (MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP),
+        MouseButton::Right => (MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP),
+        MouseButton::Middle => (MOUSEEVENTF_MIDDLEDOWN, MOUSEEVENTF_MIDDLEUP),
     };
     let mouse = |flags| INPUT {
         r#type: INPUT_MOUSE,
@@ -453,7 +459,7 @@ pub fn click(button: &str) -> io::Result<()> {
             },
         },
     };
-    send(&[mouse(down), mouse(down << 1)])
+    [mouse(down), mouse(up)]
 }
 
 pub fn move_mouse(x: i32, y: i32) -> io::Result<()> {
