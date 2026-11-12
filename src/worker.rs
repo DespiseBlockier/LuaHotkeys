@@ -16,7 +16,7 @@ use windows_sys::Win32::UI::{
     WindowsAndMessaging::{GetMessageW, PeekMessageW, MSG, PM_NOREMOVE, SW_SHOWNORMAL, WM_HOTKEY},
 };
 
-use crate::{common::wide, input};
+use crate::{common::wide, input, script_types};
 
 struct Binding {
     name: String,
@@ -230,7 +230,7 @@ fn run_script(source: &str, name: &str) -> mlua::Result<()> {
     )
     .set_name("=(LuaHotkeys)")
     .call::<()>(write)?;
-    lua.load(source).set_name(format!("@{name}")).exec()?;
+    script_types::compile(&lua, source, name)?.call::<()>(())?;
     loading.set(false);
     let bindings = bindings.borrow();
     listen(&lua, &bindings)

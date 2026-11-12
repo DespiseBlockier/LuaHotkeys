@@ -84,6 +84,11 @@ foreach ($package in $packages) {
 $notices = New-Object System.Text.StringBuilder
 [void]$notices.AppendLine([IO.File]::ReadAllText($license).TrimEnd())
 [void]$notices.AppendLine().AppendLine('Rust dependency license notices').AppendLine()
+foreach ($package in ($packages | Where-Object { $_.name -in 'full_moon', 'full_moon_derive' })) {
+    [void]$notices.AppendLine("$($package.name) $($package.version) ($($package.license))")
+    [void]$notices.AppendLine('License: https://www.mozilla.org/MPL/2.0/')
+    [void]$notices.AppendLine("Source: https://crates.io/api/v1/crates/$($package.name)/$($package.version)/download").AppendLine()
+}
 foreach ($licenseText in $texts.Keys) {
     [void]$notices.AppendLine(($texts[$licenseText] -join ', ')).AppendLine().AppendLine($licenseText).AppendLine()
 }

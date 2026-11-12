@@ -9,6 +9,7 @@ mod gui;
 mod highlight;
 mod input;
 mod lua_syntax;
+mod script_types;
 mod suggestions;
 mod theme;
 mod worker;

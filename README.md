@@ -42,6 +42,23 @@ The editor suggests Lua keywords and functions as you type. Use **Ctrl+Space** t
 
 Function completions add parentheses and place the caret inside. For example, completing `hotkey` inserts `hotkey()`. Completion also recognizes Lua library members such as `math.sqrt` and suggests block templates in code.
 
+Inside a shortcut string in `hotkey`, `press`, or a local `Combo` assignment, completion suggests valid modifiers and keys for the current `+`-separated part. Open **Docs → Types → Combo** for all supported keys, aliases, and registration limits.
+
+## Script types
+
+LuaHotkeys scripts accept optional Luau-style annotations on local variables, function parameters, and return values. Define aliases with `type Name = ...`.
+
+```lua
+type SaveShortcut = Combo
+local save: SaveShortcut = "Ctrl+Shift+S"
+
+hotkey(save, function()
+    log("Save shortcut pressed")
+end)
+```
+
+Annotations and aliases are erased before the entry script runs in Lua 5.1. API functions validate arguments at runtime. Modules loaded by Lua's `require` use standard Lua 5.1 syntax.
+
 ## Lua functions
 
 ```lua

@@ -1,6 +1,7 @@
 use std::fmt::Write;
 
-use crate::{completion, highlight, theme};
+use super::types::{TYPES, TYPE_EXAMPLE};
+use crate::{completion, highlight, input, theme};
 
 pub struct Category {
     pub name: &'static str,
@@ -29,8 +30,8 @@ pub const CATEGORIES: &[Category] = &[
             name: "hotkey",
             description: "Registers a global key combination. Declare it at the top level of your script so LuaHotkeys can bind it when you click Run.",
             parameters: &[
-                ("combo", "A shortcut such as Ctrl+Alt+J. Key names are case-insensitive."),
-                ("callback", "The Lua function to run when the shortcut is pressed."),
+                ("combo: Combo", "The key to listen for. See Types → Combo for every supported key."),
+                ("callback: HotkeyCallback", "The Lua function to run when the shortcut is pressed."),
             ],
             returns: None,
             example: STARTER,
@@ -43,14 +44,14 @@ pub const CATEGORIES: &[Category] = &[
             Function {
                 name: "type_text",
                 description: "Types text into the focused window. Newlines send Enter.",
-                parameters: &[("text", "The text to type.")],
+                parameters: &[("text: string", "The text to type.")],
                 returns: None,
                 example: r#"type_text("First line\nSecond line")"#,
             },
             Function {
                 name: "press",
                 description: "Sends one key or a key combination to the focused window.",
-                parameters: &[("combo", "A key or combination such as Enter, Escape, or Ctrl+S.")],
+                parameters: &[("combo: Combo", "The key to send. See Types → Combo for every supported key.")],
                 returns: None,
                 example: r#"press("Ctrl+S")"#,
             },
@@ -63,14 +64,14 @@ pub const CATEGORIES: &[Category] = &[
             Function {
                 name: "click",
                 description: "Clicks a button at the current pointer position.",
-                parameters: &[("button", "Use left, right, or middle. Omit the argument for a left click.")],
+                parameters: &[("button: MouseButton?", "Use left, right, or middle. Omit the argument for a left click.")],
                 returns: None,
                 example: r#"click("right")"#,
             },
             Function {
                 name: "move_mouse",
                 description: "Moves the pointer to desktop coordinates. Coordinates are measured in pixels.",
-                parameters: &[("x", "Horizontal position."), ("y", "Vertical position.")],
+                parameters: &[("x: Pixel", "Horizontal position."), ("y: Pixel", "Vertical position.")],
                 returns: None,
                 example: "move_mouse(400, 300)",
             },
@@ -78,7 +79,7 @@ pub const CATEGORIES: &[Category] = &[
                 name: "mouse_pos",
                 description: "Reads the pointer’s current desktop coordinates.",
                 parameters: &[],
-                returns: Some("Two numbers in order, x and y."),
+                returns: Some("Two Pixel values in order, x and y."),
                 example: "local x, y = mouse_pos()\nlog(x, y)",
             },
         ],
@@ -89,7 +90,7 @@ pub const CATEGORIES: &[Category] = &[
         functions: &[Function {
             name: "sleep",
             description: "Pauses the running script for the requested duration.",
-            parameters: &[("milliseconds", "A nonnegative whole number of milliseconds.")],
+            parameters: &[("milliseconds: Milliseconds", "The number of milliseconds to wait.")],
             returns: None,
             example: "local delay = math.floor(0.25 * 1000)\nsleep(delay)\npress(\"Enter\")",
         }],
@@ -102,8 +103,8 @@ pub const CATEGORIES: &[Category] = &[
                 name: "run",
                 description: "Opens an app, file, or URL through Windows. Relative paths use the script’s folder.",
                 parameters: &[
-                    ("program", "The app, file, or URL to open."),
-                    ("...", "Optional command-line arguments as separate strings."),
+                    ("program: string", "The app, file, or URL to open."),
+                    ("...: string", "Optional command-line arguments as separate strings."),
                 ],
                 returns: None,
                 example: r#"run("notepad.exe")"#,
@@ -111,14 +112,14 @@ pub const CATEGORIES: &[Category] = &[
             Function {
                 name: "log",
                 description: "Writes values to the Activity pane. Values are converted to text and separated by tabs.",
-                parameters: &[("...", "The values to write.")],
+                parameters: &[("...: any", "The values to write.")],
                 returns: None,
                 example: r#"log("Macro started", os.date("%H:%M:%S"))"#,
             },
             Function {
                 name: "print",
                 description: "Writes values to the Activity pane, just like log.",
-                parameters: &[("...", "The values to write.")],
+                parameters: &[("...: any", "The values to write.")],
                 returns: None,
                 example: r#"print(string.format("Result: %d", 42))"#,
             },
@@ -129,6 +130,8 @@ pub const CATEGORIES: &[Category] = &[
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Page {
     Start,
+    Types,
+    Type(usize),
     Category(usize),
     Function(usize, usize),
 }
@@ -137,6 +140,8 @@ impl Page {
     pub fn id(self) -> isize {
         match self {
             Self::Start => 0,
+            Self::Types => 1,
+            Self::Type(index) => (index + 2) as isize,
             Self::Category(group) => ((group + 1) << 8) as isize,
             Self::Function(group, function) => (((group + 1) << 8) | (function + 1)) as isize,
         }
@@ -144,8 +149,11 @@ impl Page {
 
     pub fn from_id(id: isize) -> Option<Self> {
         let id = usize::try_from(id).ok()?;
-        if id == 0 {
-            return Some(Self::Start);
+        match id {
+            0 => return Some(Self::Start),
+            1 => return Some(Self::Types),
+            2..=255 => return TYPES.get(id - 2).map(|_| Self::Type(id - 2)),
+            _ => {}
         }
         let group = (id >> 8).checked_sub(1)?;
         let category = CATEGORIES.get(group)?;
@@ -161,6 +169,8 @@ impl Page {
     pub fn example(self) -> Option<&'static str> {
         match self {
             Self::Start => Some(STARTER),
+            Self::Types => Some(TYPE_EXAMPLE),
+            Self::Type(index) => Some(TYPES[index].example),
             Self::Category(_) => None,
             Self::Function(group, index) => Some(CATEGORIES[group].functions[index].example),
         }
@@ -178,9 +188,31 @@ impl Page {
                 page.heading("Autocomplete");
                 page.paragraph("Type a function or keyword, or press Ctrl+Space. Use the arrow keys to select a suggestion, then press Tab or Enter. Escape closes the list.");
                 page.heading("Key combinations");
-                page.paragraph("Combine Ctrl, Alt, Shift, or Win with a letter, digit, function key, or name such as Left, PageDown, Space, or NumPad1. Choose a different combination if Windows reports a conflict.");
+                page.paragraph("Open Types → Combo for the full list of accepted keys, modifiers, and example shortcuts.");
                 page.heading("Explorer and updates");
                 page.paragraph("Setup registers both LuaHotkeys extensions. In the portable build, choose Associate files from the tray menu for Explorer’s New and Edit actions. Click Update in the editor to check for a new release.");
+            }
+            Self::Types => {
+                page.title("Types");
+                page.paragraph("Open a type in the sidebar to see which values it describes. Function signatures show each argument’s type. A question mark marks an optional value.");
+                page.heading("Annotate variables and functions");
+                page.paragraph("Add : Type after a local variable or function parameter. Add : Type after the closing parenthesis of a function to describe its return value.");
+                page.heading("Define your own types");
+                page.paragraph("Use type Name = ... to define an alias. Alias definitions can describe existing types, tables with named fields, optional values, and unions such as string | number.");
+                page.code(TYPE_EXAMPLE);
+                page.paragraph("Annotations describe the source. LuaHotkeys removes them before running the script. Functions such as hotkey and press validate their arguments at runtime.");
+            }
+            Self::Type(index) => {
+                let doc = &TYPES[index];
+                page.paragraph_with("Types", 20, 2, false, 70);
+                page.title(doc.name);
+                page.paragraph(doc.description);
+                page.code(doc.definition);
+                if doc.name == "Combo" {
+                    page.combo();
+                }
+                page.heading("Example");
+                page.code(doc.example);
             }
             Self::Category(group) => {
                 let category = &CATEGORIES[group];
@@ -261,6 +293,30 @@ impl Document {
 
     fn heading(&mut self, text: &str) {
         self.paragraph_with(text, 27, 1, true, 100);
+    }
+
+    fn combo(&mut self) {
+        self.heading("Write a combination");
+        self.paragraph("Write the modifiers first, then one main key. Separate the parts with +. Spaces around the parts and letter case are ignored. Ctrl+Alt+J and alt + control + j are the same combination. A single key such as Enter also works.");
+        self.heading("Modifiers");
+        self.paragraph("Ctrl (or Control), Alt, Shift, and Win (or Windows). Each modifier may appear once, in any order. A modifier by itself is incomplete.");
+        self.heading("Accepted main keys");
+        self.argument("Letters and digits", "A through Z and 0 through 9.");
+        self.argument("Function keys", "F1 through F24. F12 can be sent with press, but Windows reserves it for the debugger and hotkey cannot register it.");
+        self.argument("Number pad", "NumPad0 through NumPad9.");
+        for (group, keys) in input::NAMED_KEYS {
+            let names = keys
+                .iter()
+                .map(|(name, _)| *name)
+                .collect::<Vec<_>>()
+                .join(", ");
+            self.argument(group, &names);
+        }
+        self.heading("Troubleshooting");
+        self.paragraph("Ctrl+S+T has two main keys. Ctrl++ is missing a supported main key. Use type_text for literal punctuation and click for mouse buttons.");
+        self.paragraph("Windows and other apps can reserve shortcuts, especially combinations with Win. Choose another combination if Activity reports a registration error. For press, switch focus to the window you want to receive the keystroke.");
+        self.heading("Autocomplete");
+        self.paragraph("Suggestions appear in quoted shortcuts passed to hotkey or press, and in local Combo assignments. Type Ct to get Ctrl, then type + to start the next part. Use the arrow keys and Tab to choose a suggestion.");
     }
 
     fn paragraph(&mut self, text: &str) {

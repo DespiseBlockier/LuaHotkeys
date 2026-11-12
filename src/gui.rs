@@ -1232,6 +1232,16 @@ mod tests {
         assert!(!app.popup.is_open());
         drop(app);
 
+        set_text(editor, r#"press("Ctrl+A")"#);
+        unsafe { SendMessageW(editor, EM_SETSEL, 13, 13) };
+        let mut app = state.borrow_mut();
+        assert!(app.completion_key(VK_SPACE, true, false));
+        assert!(app.popup.is_open());
+        assert!(app.completion_key(VK_TAB, false, false));
+        assert_eq!(editor::text(editor), r#"press("Ctrl+Alt")"#);
+        assert_eq!(editor::selection(editor), (15, 15));
+        drop(app);
+
         unsafe { SendMessageW(owner, WM_COMMAND, DOCS as usize, 0) };
         let docs = state.borrow().docs;
         assert!(!docs.is_null());

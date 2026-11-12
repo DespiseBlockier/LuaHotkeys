@@ -13,6 +13,61 @@ pub struct Combination {
     pub key: u16,
 }
 
+pub const NAMED_KEYS: &[(&str, &[(&str, u16)])] = &[
+    (
+        "Typing and editing",
+        &[
+            ("Enter", VK_RETURN),
+            ("Esc", VK_ESCAPE),
+            ("Escape", VK_ESCAPE),
+            ("Space", VK_SPACE),
+            ("Tab", VK_TAB),
+            ("Backspace", VK_BACK),
+            ("Delete", VK_DELETE),
+            ("Insert", VK_INSERT),
+            ("CapsLock", VK_CAPITAL),
+        ],
+    ),
+    (
+        "Navigation",
+        &[
+            ("Home", VK_HOME),
+            ("End", VK_END),
+            ("PageUp", VK_PRIOR),
+            ("PageDown", VK_NEXT),
+            ("Up", VK_UP),
+            ("Down", VK_DOWN),
+            ("Left", VK_LEFT),
+            ("Right", VK_RIGHT),
+        ],
+    ),
+    (
+        "System and media",
+        &[
+            ("PrintScreen", VK_SNAPSHOT),
+            ("VolumeUp", VK_VOLUME_UP),
+            ("VolumeDown", VK_VOLUME_DOWN),
+            ("VolumeMute", VK_VOLUME_MUTE),
+            ("MediaPlayPause", VK_MEDIA_PLAY_PAUSE),
+        ],
+    ),
+];
+
+pub const MODIFIERS: &[(&str, &[&str], u32)] = &[
+    ("Ctrl", &["Control"], MOD_CONTROL),
+    ("Alt", &[], MOD_ALT),
+    ("Shift", &[], MOD_SHIFT),
+    ("Win", &["Windows"], MOD_WIN),
+];
+
+pub fn modifier_flag(part: &str) -> Option<u32> {
+    MODIFIERS.iter().find_map(|&(name, aliases, flag)| {
+        (name.eq_ignore_ascii_case(part)
+            || aliases.iter().any(|alias| alias.eq_ignore_ascii_case(part)))
+        .then_some(flag)
+    })
+}
+
 pub fn parse(text: &str) -> Result<Combination, String> {
     let mut parts = text.split('+').map(str::trim).peekable();
     let mut modifiers = 0;
@@ -22,13 +77,7 @@ pub fn parse(text: &str) -> Result<Combination, String> {
                 .map(|key| Combination { modifiers, key })
                 .ok_or_else(|| format!("Unknown key in '{text}'."));
         }
-        let flag = match part.to_ascii_lowercase().as_str() {
-            "alt" => MOD_ALT,
-            "ctrl" | "control" => MOD_CONTROL,
-            "shift" => MOD_SHIFT,
-            "win" | "windows" => MOD_WIN,
-            _ => 0,
-        };
+        let flag = modifier_flag(part).unwrap_or(0);
         if flag == 0 || modifiers & flag != 0 {
             return Err(format!(
                 "Invalid modifier in '{text}'. Use Ctrl, Alt, Shift or Win."
@@ -57,30 +106,10 @@ fn key_code(name: &str) -> Option<u16> {
     {
         return (1..=24).contains(&number).then(|| VK_F1 + number - 1);
     }
-    Some(match name.as_str() {
-        "enter" => VK_RETURN,
-        "esc" | "escape" => VK_ESCAPE,
-        "space" => VK_SPACE,
-        "tab" => VK_TAB,
-        "backspace" => VK_BACK,
-        "delete" => VK_DELETE,
-        "insert" => VK_INSERT,
-        "home" => VK_HOME,
-        "end" => VK_END,
-        "pageup" => VK_PRIOR,
-        "pagedown" => VK_NEXT,
-        "up" => VK_UP,
-        "down" => VK_DOWN,
-        "left" => VK_LEFT,
-        "right" => VK_RIGHT,
-        "capslock" => VK_CAPITAL,
-        "printscreen" => VK_SNAPSHOT,
-        "volumeup" => VK_VOLUME_UP,
-        "volumedown" => VK_VOLUME_DOWN,
-        "volumemute" => VK_VOLUME_MUTE,
-        "mediaplaypause" => VK_MEDIA_PLAY_PAUSE,
-        _ => return None,
-    })
+    NAMED_KEYS
+        .iter()
+        .flat_map(|(_, keys)| keys.iter())
+        .find_map(|&(key, code)| key.eq_ignore_ascii_case(&name).then_some(code))
 }
 
 fn modifiers(combo: Combination) -> impl DoubleEndedIterator<Item = u16> {

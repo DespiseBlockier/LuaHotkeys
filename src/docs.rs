@@ -1,6 +1,8 @@
 mod content;
+mod types;
 
 use self::content::{Page, CATEGORIES};
+use self::types::TYPES;
 use crate::{
     common::{app_icon, wide},
     editor, theme,
@@ -228,6 +230,15 @@ fn initialize(window: HWND) -> bool {
     let start = insert_item(nav, TVI_ROOT, "Getting started", Page::Start);
     if start == 0 {
         return false;
+    }
+    let types = insert_item(nav, TVI_ROOT, "Types", Page::Types);
+    if types == 0 {
+        return false;
+    }
+    for (index, doc) in TYPES.iter().enumerate() {
+        if insert_item(nav, types, doc.name, Page::Type(index)) == 0 {
+            return false;
+        }
     }
     for (group, category) in CATEGORIES.iter().enumerate() {
         let node = insert_item(nav, TVI_ROOT, category.name, Page::Category(group));
@@ -479,7 +490,9 @@ pub(crate) fn verify_reference(window: HWND) {
         verify_painted_code(content, "hotkey(\"Ctrl+Alt+J\", function()");
         verify_panel_width(window, content);
         assert_ne!(IsWindowVisible(copy), 0);
-        let mut item = SendMessageW(nav, TVM_GETNEXTITEM, TVGN_ROOT as usize, 0);
+        let root = SendMessageW(nav, TVM_GETNEXTITEM, TVGN_ROOT as usize, 0);
+        let types = SendMessageW(nav, TVM_GETNEXTITEM, TVGN_NEXT as usize, root);
+        let mut item = types;
         verify_category_arrow(
             nav,
             SendMessageW(nav, TVM_GETNEXTITEM, TVGN_NEXT as usize, item),
@@ -493,8 +506,8 @@ pub(crate) fn verify_reference(window: HWND) {
             0
         );
         assert!(editor::text(content).starts_with("Timing"));
-        assert!(editor::text(content).contains("sleep(milliseconds)"));
-        verify_painted_code(content, "sleep(milliseconds)");
+        assert!(editor::text(content).contains("sleep(milliseconds: Milliseconds)"));
+        verify_painted_code(content, "sleep(milliseconds: Milliseconds)");
         assert_eq!(IsWindowVisible(copy), 0);
 
         item = SendMessageW(nav, TVM_GETNEXTITEM, TVGN_CHILD as usize, item);
@@ -515,6 +528,30 @@ pub(crate) fn verify_reference(window: HWND) {
         assert_ne!(colors, theme::TEXT);
         SendMessageW(content, EM_SETSEL, 0, 0);
         verify_painted_code(content, "local delay = math.floor(0.25 * 1000)");
+
+        assert_ne!(
+            SendMessageW(nav, TVM_SELECTITEM, TVGN_CARET as usize, types),
+            0
+        );
+        assert!(editor::text(content).contains("type SaveShortcut = Combo"));
+        assert_ne!(SendMessageW(nav, TVM_EXPAND, TVE_EXPAND as usize, types), 0);
+        let combo = SendMessageW(nav, TVM_GETNEXTITEM, TVGN_CHILD as usize, types);
+        assert_ne!(
+            SendMessageW(nav, TVM_SELECTITEM, TVGN_CARET as usize, combo),
+            0
+        );
+        let reference = editor::text(content);
+        for label in [
+            "Accepted main keys",
+            "F1 through F24",
+            "NumPad0 through NumPad9",
+            "VolumeMute",
+        ] {
+            assert!(
+                reference.contains(label),
+                "Combo reference is missing {label}"
+            );
+        }
     }
 }
 

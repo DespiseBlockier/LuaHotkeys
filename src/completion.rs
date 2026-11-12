@@ -1,6 +1,8 @@
 use crate::lua_syntax::{is_word_byte, Kind, Token, Tokens};
 use std::{collections::VecDeque, ops::Range};
 
+mod combo;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Style {
     Call,
@@ -40,15 +42,15 @@ const fn value(name: &'static str, detail: &'static str) -> Item {
 }
 
 const API: &[Item] = &[
-    call("hotkey", "(combo, callback)"),
-    call("type_text", "(text)"),
-    call("press", "(combo)"),
-    call("click", "([button])"),
-    call("move_mouse", "(x, y)"),
-    call("mouse_pos", "()"),
-    call("sleep", "(milliseconds)"),
-    call("run", "(program, ...)"),
-    call("log", "(...)"),
+    call("hotkey", "(combo: Combo, callback: HotkeyCallback)"),
+    call("type_text", "(text: string)"),
+    call("press", "(combo: Combo)"),
+    call("click", "(button: MouseButton?)"),
+    call("move_mouse", "(x: Pixel, y: Pixel)"),
+    call("mouse_pos", "(): (Pixel, Pixel)"),
+    call("sleep", "(milliseconds: Milliseconds)"),
+    call("run", "(program: string, ...: string)"),
+    call("log", "(...: any)"),
 ];
 
 const GLOBALS: &[Item] = &[
@@ -66,7 +68,7 @@ const GLOBALS: &[Item] = &[
     call("next", "(table, [key])"),
     call("pairs", "(table)"),
     call("pcall", "(function, ...)"),
-    call("print", "(...)"),
+    call("print", "(...: any)"),
     call("rawequal", "(a, b)"),
     call("rawget", "(table, key)"),
     call("rawset", "(table, key, value)"),
@@ -325,16 +327,13 @@ pub fn suggest(source: &str, caret: usize, manual: bool) -> Option<Suggestions> 
         end += 1;
     }
     let prefix = &source[start..caret];
-    if bytes.get(start).is_some_and(u8::is_ascii_digit) {
-        return None;
-    }
-
     let mut previous = VecDeque::new();
     let mut blocks = Vec::new();
     for token in Tokens::new(source).take_while(|token| token.start <= caret) {
-        if token.blocks_completion(caret)
-            || (token.kind == Kind::Number && token.start < caret && caret <= token.end)
-        {
+        if token.blocks_completion(caret) {
+            return combo::suggest(source, caret, token, &previous, manual);
+        }
+        if token.kind == Kind::Number && token.start < caret && caret <= token.end {
             return None;
         }
         if token.end <= start && token.kind != Kind::Comment {
@@ -346,6 +345,9 @@ pub fn suggest(source: &str, caret: usize, manual: bool) -> Option<Suggestions> 
             }
             previous.push_back(token);
         }
+    }
+    if bytes.get(start).is_some_and(u8::is_ascii_digit) {
+        return None;
     }
     let last = previous.back().map_or("", |token| token.text);
     if prefix.is_empty() && !manual && last != "." {
@@ -648,5 +650,36 @@ mod tests {
             completed("local fun", 9, "function"),
             "local function |()\n    \nend"
         );
+    }
+
+    #[test]
+    fn completes_the_current_combo_segment_in_shortcut_strings() {
+        let source = r#"hotkey("Ct", callback)"#;
+        assert_eq!(
+            completed(source, 10, "Ctrl"),
+            r#"hotkey("Ctrl|", callback)"#
+        );
+        let source = r#"press("Ctrl+A")"#;
+        assert_eq!(completed(source, 13, "Alt"), r#"press("Ctrl+Alt|")"#);
+        let source = "type SaveKey = Combo\nlocal save: SaveKey = 'Shift+nu'";
+        assert_eq!(
+            completed(source, source.len() - 1, "NumPad2"),
+            "type SaveKey = Combo\nlocal save: SaveKey = 'Shift+NumPad2|'"
+        );
+        let source = r#"press("Ctrl+Sh+F1")"#;
+        assert_eq!(completed(source, 14, "Shift"), r#"press("Ctrl+Shift|+F1")"#);
+        let source = r#"press("Ctrl+")"#;
+        let list = suggest(source, 12, false).unwrap();
+        assert!(list.items.iter().any(|item| item.name == "Alt"));
+        assert!(!list.items.iter().any(|item| item.name == "Ctrl"));
+        for source in [
+            r#"log("Ct"#,
+            r#"obj:hotkey("Ct"#,
+            r#"hotkey("F1", "Ct"#,
+            r#"press("F1+Ct"#,
+            "type Message = string\nlocal message: Message = \"Ct",
+        ] {
+            assert!(suggest(source, source.len(), false).is_none(), "{source}");
+        }
     }
 }

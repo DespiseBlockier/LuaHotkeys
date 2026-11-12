@@ -1,6 +1,6 @@
 [package]
 name = "luahotkeys"
-version = "0.6.2"
+version = "0.7.0"
 edition = "2021"
 rust-version = "1.88"
 autobins = false
@@ -15,6 +15,7 @@ path = "src/updater/main.rs"
 
 [dependencies]
 base64 = "0.22"
+full_moon = { version = "2.2", features = ["luau"] }
 mlua = { version = "0.11", features = ["lua51"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
