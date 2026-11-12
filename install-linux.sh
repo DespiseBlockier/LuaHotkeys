@@ -51,12 +51,11 @@ mkdir "$work/gnupg"
 curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' \
     --output "$key" "$site/luahotkeys.asc"
 key_details=$("$gpg" --batch --homedir "$work/gnupg" --with-colons --show-keys "$key")
-actual=$(printf '%s\n' "$key_details" | awk -F: '
-    $1 == "pub" { count++; primary = 1 }
-    $1 == "fpr" && primary { fingerprint = $10; primary = 0 }
-    END { if (count == 1) print fingerprint }
-')
-[ "$actual" = "$fingerprint" ] || fail 'The repository signing key fingerprint does not match.'
+primary_keys=$(printf '%s\n' "$key_details" | sed -n '/^pub:/p' | wc -l)
+actual=$(printf '%s\n' "$key_details" | sed -n '/^fpr:/{s/^fpr:::::::::\([0-9A-F]\{40\}\):.*$/\1/p;q;}')
+if [ "$primary_keys" -ne 1 ] || [ "$actual" != "$fingerprint" ]; then
+    fail 'The repository signing key fingerprint does not match.'
+fi
 
 if [ "$ID" = arch ]; then
     server="$site/arch/\$arch"
@@ -104,8 +103,10 @@ gpgcheck=1
 repo_gpgcheck=1
 pkg_gpgcheck=1
 EOF
-    if [ -e "$config" ] && ! cmp -s "$work/luahotkeys.repo" "$config"; then
-        fail 'Zypper already has a different luahotkeys repository configuration.'
+    if [ -e "$config" ]; then
+        existing=$(as_root cat "$config")
+        expected=$(cat "$work/luahotkeys.repo")
+        [ "$existing" = "$expected" ] || fail 'Zypper already has a different luahotkeys repository configuration.'
     fi
     as_root rpmkeys --import "$key"
     if [ ! -e "$config" ]; then
