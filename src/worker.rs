@@ -21,7 +21,7 @@ use crate::{
     common::wide,
     input,
     macro_gui::{immediate, windows::NativeWindow, Engine, Gui},
-    runtime::{self, Binding, Output},
+    runtime::{self, Binding, HotkeyTrigger, Output},
     shortcut::{Combination, Key},
 };
 
@@ -136,7 +136,7 @@ pub fn listen(lua: &Lua, bindings: &[Binding], output: Output, gui: &Gui) -> mlu
     unsafe { PeekMessageW(&mut windows_message, null_mut(), 0, 0, PM_NOREMOVE) };
     let mut registered = Registered(0);
     for binding in bindings {
-        input::register(registered.0 + 1, binding.combo).map_err(|error| {
+        input::register(registered.0 + 1, binding.combo, binding.trigger).map_err(|error| {
             Error::runtime(format!("Couldn't register {}. {error}", binding.name))
         })?;
         registered.0 += 1;
@@ -212,7 +212,9 @@ pub fn listen(lua: &Lua, bindings: &[Binding], output: Output, gui: &Gui) -> mlu
 
 fn activate(lua: &Lua, bindings: &[Binding], output: Output, id: usize, gui: &Gui) {
     if let Some(binding) = id.checked_sub(1).and_then(|index| bindings.get(index)) {
-        input::wait_for_release(binding.combo);
+        if binding.trigger == HotkeyTrigger::Release {
+            input::wait_for_release(binding.combo);
+        }
         if !gui.record_key(binding.combo) {
             binding.activate(lua, output);
         }

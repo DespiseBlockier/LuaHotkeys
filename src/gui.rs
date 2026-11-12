@@ -65,6 +65,7 @@ const TITLE_LABEL: u16 = 121;
 const FILE_LABEL: u16 = 122;
 const ACTIVITY_LABEL: u16 = 123;
 const STATUS_LABEL: u16 = 124;
+const LINE_NUMBERS: u16 = 125;
 const TRAY_MESSAGE: u32 = WM_APP + 1;
 const WORKER_MESSAGE: u32 = WM_APP + 2;
 const UPDATE_CLOSE: u32 = WM_APP + 3;
@@ -91,6 +92,7 @@ struct App {
     buttons: Vec<HWND>,
     file_label: HWND,
     editor: HWND,
+    gutter: HWND,
     activity_label: HWND,
     activity: HWND,
     status: HWND,
@@ -116,6 +118,7 @@ impl App {
             buttons: Vec::new(),
             file_label: null_mut(),
             editor: null_mut(),
+            gutter: null_mut(),
             activity_label: null_mut(),
             activity: null_mut(),
             status: null_mut(),
@@ -176,6 +179,15 @@ impl App {
             0,
             EDITOR,
         )?;
+        self.gutter = child(
+            self.window,
+            "STATIC",
+            "",
+            SS_OWNERDRAW_STYLE,
+            0,
+            LINE_NUMBERS,
+        )?;
+        editor::gutter::attach(self.editor, self.gutter)?;
         self.activity_label = child(self.window, "STATIC", "Activity", 0, 0, ACTIVITY_LABEL)?;
         self.activity = child(
             self.window,
@@ -250,7 +262,9 @@ impl App {
         let available = (height - 201).max(20);
         let editor_height = available * 72 / 100;
         let log_top = 134 + editor_height + 30;
-        place(self.editor, 18, 134, width, editor_height);
+        let gutter = editor::gutter::width(self.editor).min(width.saturating_sub(1));
+        place(self.gutter, 18, 134, gutter, editor_height);
+        place(self.editor, 18 + gutter, 134, width - gutter, editor_height);
         place(self.activity_label, 18, log_top - 24, width, 20);
         place(self.activity, 18, log_top, width, available - editor_height);
         place(self.status, 18, height - 27, width, 20);
@@ -264,7 +278,17 @@ impl App {
         self.update_label();
         self.tray(NIM_MODIFY);
         editor::highlight(self.editor);
+        self.update_gutter();
         unsafe { SendMessageW(self.editor, 0x00cd, 0, 0) }; // EM_EMPTYUNDOBUFFER
+    }
+
+    fn update_gutter(&self) {
+        let mut bounds = RECT::default();
+        unsafe { GetClientRect(self.gutter, &mut bounds) };
+        if bounds.right != editor::gutter::width(self.editor) {
+            self.layout();
+        }
+        unsafe { windows_sys::Win32::Graphics::Gdi::InvalidateRect(self.gutter, null(), 0) };
     }
 
     fn load(&mut self, path: &Path) -> io::Result<()> {
@@ -666,6 +690,7 @@ impl Drop for App {
 }
 
 const SS_PATHELLIPSIS_STYLE: u32 = 0x8000;
+const SS_OWNERDRAW_STYLE: u32 = 0x000d;
 
 fn child(
     parent: HWND,
@@ -878,6 +903,10 @@ unsafe extern "system" fn window_proc(hwnd: HWND, id: u32, w: WPARAM, l: LPARAM)
                 }
                 WM_DRAWITEM => {
                     let item = unsafe { &*(l as *const DRAWITEMSTRUCT) };
+                    if item.CtlID == u32::from(LINE_NUMBERS) {
+                        editor::gutter::paint(app.editor, item);
+                        return 1;
+                    }
                     if item.CtlID == u32::from(crate::suggestions::ID) {
                         app.popup.paint(item);
                         return 1;
@@ -913,6 +942,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, id: u32, w: WPARAM, l: LPARAM)
                     unsafe { KillTimer(hwnd, COLOR_TIMER) };
                     app.update_label();
                     editor::highlight(app.editor);
+                    app.update_gutter();
                     return 0;
                 }
                 WM_CLOSE | UPDATE_CLOSE => {
@@ -1041,6 +1071,18 @@ pub fn run(file: Option<PathBuf>, start_hidden: bool) -> io::Result<()> {
             0 => return Ok(()),
             _ => {
                 let docs = app.borrow().docs;
+                if msg.message == WM_CHAR {
+                    let mut state = app.borrow_mut();
+                    if msg.hwnd == state.editor
+                        && char::from_u32(msg.wParam as u32)
+                            .is_some_and(|key| editor::pair_key(state.editor, key))
+                    {
+                        state.popup.dismiss();
+                        unsafe { PostMessageW(window, SUGGEST, 0, 0) };
+                        state.after_completion();
+                        continue;
+                    }
+                }
                 if msg.message == WM_KEYDOWN
                     && msg.wParam == usize::from(VK_TAB)
                     && crate::docs::handle_tab(docs, window, &msg)
@@ -1252,6 +1294,35 @@ mod tests {
         assert_eq!(editor::text(editor), r#"press("Ctrl+Alt")"#);
         assert_eq!(editor::selection(editor), (15, 15));
         drop(app);
+
+        let lines = (1..=110)
+            .map(|line| format!("-- line {line}"))
+            .collect::<Vec<_>>()
+            .join("\r\n");
+        set_text(editor, &lines);
+        unsafe {
+            SendMessageW(editor, EM_SETSEL, 0, 0);
+            SendMessageW(editor, EM_SCROLLCARET, 0, 0);
+        }
+        let gutter = state.borrow().gutter;
+        let mut bounds = RECT::default();
+        unsafe { GetClientRect(gutter, &mut bounds) };
+        assert_eq!(bounds.right, editor::gutter::width(editor));
+        assert_eq!(
+            editor::gutter::rows(editor, bounds.bottom)
+                .next()
+                .unwrap()
+                .0,
+            1
+        );
+        unsafe { SendMessageW(editor, 0x00b6, 0, 30) }; // EM_LINESCROLL
+        assert_eq!(
+            editor::gutter::rows(editor, bounds.bottom)
+                .next()
+                .unwrap()
+                .0,
+            31
+        );
 
         unsafe { SendMessageW(owner, WM_COMMAND, DOCS as usize, 0) };
         let docs = state.borrow().docs;

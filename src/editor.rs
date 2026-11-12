@@ -14,7 +14,9 @@ use windows_sys::{
 
 use crate::{common::wide, highlight, theme};
 
+pub mod gutter;
 mod indent;
+mod pairs;
 
 const EM_GETOLEINTERFACE: u32 = 0x043c;
 const EM_GETTEXTEX: u32 = 0x045e;
@@ -180,25 +182,51 @@ fn replace_and_select(
 }
 
 pub fn indent_key(hwnd: HWND, tab: bool, reverse: bool) -> bool {
+    edit_selection(hwnd, |source, range| {
+        Some(if tab {
+            indent::tab(source, range, reverse)
+        } else {
+            indent::enter(source, range)
+        })
+    })
+}
+
+pub fn pair_key(hwnd: HWND, key: char) -> bool {
+    if !matches!(key, '"' | '\'' | '(' | ')' | '[' | ']' | '{' | '}') {
+        return false;
+    }
+    edit_selection(hwnd, |source, range| pairs::typed(source, range, key))
+}
+
+fn edit_selection(
+    hwnd: HWND,
+    make_edit: impl FnOnce(&str, std::ops::Range<usize>) -> Option<indent::Edit>,
+) -> bool {
     let source = text(hwnd);
     let (start, end) = selection(hwnd);
     let (Some(start), Some(end)) = (utf16_to_byte(&source, start), utf16_to_byte(&source, end))
     else {
         return false;
     };
-    let edit = if tab {
-        indent::tab(&source, start..end, reverse)
-    } else {
-        indent::enter(&source, start..end)
+    let Some(edit) = make_edit(&source, start..end) else {
+        return false;
     };
-    if source[edit.range.clone()] == edit.text {
-        return true;
-    }
     let offset = source[..edit.range.start].encode_utf16().count();
     let end = offset + source[edit.range.clone()].encode_utf16().count();
     let selected = offset + edit.text[..edit.selected.start].encode_utf16().count()
         ..offset + edit.text[..edit.selected.end].encode_utf16().count();
-    replace_and_select(hwnd, offset..end, &edit.text, selected);
+    if source[edit.range.clone()] == edit.text {
+        let range = Range {
+            start: selected.start as i32,
+            end: selected.end as i32,
+        };
+        unsafe {
+            SendMessageW(hwnd, EM_EXSETSEL, 0, &range as *const _ as isize);
+            SendMessageW(hwnd, 0x00b7, 0, 0); // EM_SCROLLCARET
+        }
+    } else {
+        replace_and_select(hwnd, offset..end, &edit.text, selected);
+    }
     true
 }
 

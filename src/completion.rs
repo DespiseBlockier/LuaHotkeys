@@ -1,25 +1,30 @@
 use crate::lua_syntax::{is_word_byte, Kind, Token, Tokens};
-use std::{collections::VecDeque, ops::Range};
+use std::{borrow::Cow, collections::VecDeque, ops::Range};
 
+mod access;
 mod combo;
+mod gui_api;
+mod values;
+mod variables;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Style {
     Call,
     Keyword,
     Value,
+    TableStringKey,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Item {
-    pub name: &'static str,
+    pub name: Cow<'static, str>,
     pub detail: &'static str,
     style: Style,
 }
 
 const fn call(name: &'static str, detail: &'static str) -> Item {
     Item {
-        name,
+        name: Cow::Borrowed(name),
         detail,
         style: Style::Call,
     }
@@ -27,7 +32,7 @@ const fn call(name: &'static str, detail: &'static str) -> Item {
 
 const fn keyword(name: &'static str) -> Item {
     Item {
-        name,
+        name: Cow::Borrowed(name),
         detail: "Lua keyword",
         style: Style::Keyword,
     }
@@ -35,14 +40,17 @@ const fn keyword(name: &'static str) -> Item {
 
 const fn value(name: &'static str, detail: &'static str) -> Item {
     Item {
-        name,
+        name: Cow::Borrowed(name),
         detail,
         style: Style::Value,
     }
 }
 
 const API: &[Item] = &[
-    call("hotkey", "(combo: Combo, callback: HotkeyCallback)"),
+    call(
+        "hotkey",
+        "(combo: Combo, callback: HotkeyCallback, trigger: \"release\" | \"press\"?)",
+    ),
     call("type_text", "(text: string)"),
     call("press", "(combo: Combo)"),
     call("click", "(button: MouseButton?)"),
@@ -86,6 +94,7 @@ const WINDOW_METHODS: &[Item] = &[
     call("close", "()"),
 ];
 const SIGNAL_METHODS: &[Item] = &[call("connect", "(callback: (...any) -> ())")];
+const CONNECTION_METHODS: &[Item] = &[call("disconnect", "()")];
 const CONTROL_METHODS: &[Item] = &[
     call("get", "()"),
     call("set", "(value: any)"),
@@ -342,7 +351,7 @@ pub fn signature(name: &str) -> Option<&'static str> {
                     .map(|item| item.detail)
             }
             "control" | "dropdown" | "picker" => CONTROL_METHODS,
-            "connection" => &[call("disconnect", "()")],
+            "connection" => CONNECTION_METHODS,
             "signal" => SIGNAL_METHODS,
             _ => return None,
         };
@@ -364,7 +373,7 @@ pub fn builtin(namespace: Option<&str>, name: &str) -> Option<Builtin> {
     match item.style {
         Style::Call => Some(Builtin::Function),
         Style::Value if name == "_G" || !members(name).is_empty() => Some(Builtin::Library),
-        Style::Value => Some(Builtin::Value),
+        Style::Value | Style::TableStringKey => Some(Builtin::Value),
         Style::Keyword => None,
     }
 }
@@ -373,6 +382,16 @@ pub struct Suggestions {
     pub range: Range<usize>,
     pub items: Vec<Item>,
     expression: bool,
+    access: Access,
+}
+
+#[derive(Clone, Copy, Default)]
+enum Access {
+    #[default]
+    Plain,
+    GuiDot,
+    Index,
+    QuotedIndex(char),
 }
 
 pub struct Edit {
@@ -399,10 +418,18 @@ pub fn suggest(source: &str, caret: usize, manual: bool) -> Option<Suggestions> 
     for token in Tokens::new(source).take_while(|token| token.start <= caret) {
         if token.blocks_completion(caret) {
             return gui_engine_suggestions(source, caret, token, &previous)
-                .or_else(|| combo::suggest(source, caret, token, &previous, manual));
+                .or_else(|| combo::suggest(source, caret, token, &previous, manual))
+                .or_else(|| access::quoted_index(source, caret, token, previous.back().copied()));
         }
         if token.kind == Kind::Number && token.start < caret && caret <= token.end {
-            return None;
+            let open = previous.back().filter(|open| open.text == "[")?;
+            return access::index(
+                source,
+                *open,
+                token.start..token.end,
+                &source[token.start..caret],
+                true,
+            );
         }
         if token.end <= start && token.kind != Kind::Comment {
             if token.kind == Kind::Word {
@@ -426,15 +453,10 @@ pub fn suggest(source: &str, caret: usize, manual: bool) -> Option<Suggestions> 
                 .map(|name| value(name, "GUI engine"))
                 .collect(),
             expression: true,
+            access: Access::Plain,
         });
     }
-    let gui_method = last == ":"
-        && previous
-            .iter()
-            .rev()
-            .nth(1)
-            .is_some_and(|token| token.text == "gui");
-    if prefix.is_empty() && !manual && last != "." && !gui_method {
+    if prefix.is_empty() && !manual && !matches!(last, "." | ":" | "[") {
         return None;
     }
 
@@ -448,21 +470,11 @@ pub fn suggest(source: &str, caret: usize, manual: bool) -> Option<Suggestions> 
     let mut candidates = Vec::new();
     let mut expression = false;
 
-    if gui_method {
-        candidates.extend_from_slice(ENGINE_METHODS);
-    } else if last == "." {
-        let namespace = previous
-            .iter()
-            .rev()
-            .nth(1)
-            .filter(|token| token.kind == Kind::Word)?
-            .text;
-        if namespace == "_G" {
-            candidates.extend_from_slice(API);
-            candidates.extend_from_slice(GLOBALS);
-        } else if namespace != "gui" {
-            candidates.extend_from_slice(members(namespace));
+    if matches!(last, "." | ":") {
+        if last == ":" && ((has("local") && !has("=")) || in_parameter_list(&previous)) {
+            return None;
         }
+        return access::members(source, &previous, start..end, prefix);
     } else if last == "local" {
         candidates.push(keyword("function"));
     } else if last != ":" && last != "function" && !in_parameter_list(&previous) {
@@ -478,24 +490,55 @@ pub fn suggest(source: &str, caret: usize, manual: bool) -> Option<Suggestions> 
             expression = needs_then || needs_do || expects_expression(last);
             let statement_start = source[line_start..start].trim().is_empty()
                 || matches!(last, ";" | "then" | "do" | "else" | "repeat");
+            let mut symbols = variables::collect(source, start);
+            if last == "[" {
+                if let Some(items) = access::index_with_symbols(
+                    source,
+                    &mut symbols,
+                    *previous.back()?,
+                    start..end,
+                    prefix,
+                    false,
+                ) {
+                    return Some(items);
+                }
+            }
+            let names = &symbols.names;
+            candidates.extend(
+                names
+                    .iter()
+                    .filter(|name| prefix_matches(name.text, prefix))
+                    .map(|name| Item {
+                        name: Cow::Owned(name.text.to_owned()),
+                        detail: name.value.detail(name.detail),
+                        style: Style::Value,
+                    }),
+            );
             if statement_start || expression || !prefix.is_empty() || manual {
-                candidates.extend_from_slice(API);
-                candidates.extend_from_slice(GLOBALS);
+                candidates.extend(
+                    API.iter()
+                        .chain(GLOBALS)
+                        .filter(|item| !names.iter().any(|name| name.text == item.name))
+                        .cloned(),
+                );
             }
             if statement_start && !expression {
-                candidates.extend(STATEMENTS.iter().copied().filter(|item| {
-                    match item.name {
-                        "break" => blocks
-                            .iter()
-                            .rev()
-                            .take_while(|&&block| block != Block::Function)
-                            .any(|block| matches!(block, Block::Loop | Block::Repeat)),
-                        "else" | "elseif" => blocks.last() == Some(&Block::IfBody),
-                        "end" => blocks.last().is_some_and(|block| *block != Block::Repeat),
-                        "until" => blocks.last() == Some(&Block::Repeat),
-                        _ => true,
-                    }
-                }));
+                candidates.extend(
+                    STATEMENTS
+                        .iter()
+                        .filter(|item| match item.name.as_ref() {
+                            "break" => blocks
+                                .iter()
+                                .rev()
+                                .take_while(|&&block| block != Block::Function)
+                                .any(|block| matches!(block, Block::Loop | Block::Repeat)),
+                            "else" | "elseif" => blocks.last() == Some(&Block::IfBody),
+                            "end" => blocks.last().is_some_and(|block| *block != Block::Repeat),
+                            "until" => blocks.last() == Some(&Block::Repeat),
+                            _ => true,
+                        })
+                        .cloned(),
+                );
             } else {
                 candidates.extend_from_slice(EXPRESSIONS);
                 if !expects_expression(last) {
@@ -512,17 +555,27 @@ pub fn suggest(source: &str, caret: usize, manual: bool) -> Option<Suggestions> 
     }
 
     candidates.retain(|item| {
-        item.name.starts_with(prefix)
-            && (item.name != &source[start..end]
+        prefix_matches(&item.name, prefix)
+            && (item.name != source[start..end]
                 || item.style == Style::Call
-                || (item.style == Style::Keyword && is_template(item.name)))
+                || (item.style == Style::Keyword && is_template(&item.name)))
     });
     candidates.sort_by_key(|item| item.name != prefix);
     (!candidates.is_empty()).then_some(Suggestions {
         range: start..end,
         items: candidates,
         expression,
+        access: Access::Plain,
     })
+}
+
+fn prefix_matches(name: &str, prefix: &str) -> bool {
+    if name.is_ascii() && prefix.is_ascii() {
+        name.get(..prefix.len())
+            .is_some_and(|start| start.eq_ignore_ascii_case(prefix))
+    } else {
+        name.to_lowercase().starts_with(&prefix.to_lowercase())
+    }
 }
 
 fn gui_engine_suggestions(
@@ -554,6 +607,7 @@ fn gui_engine_suggestions(
         range: start..end,
         items,
         expression: false,
+        access: Access::Plain,
     })
 }
 
@@ -657,23 +711,50 @@ fn is_template(word: &str) -> bool {
 }
 
 impl Suggestions {
-    pub fn edit(&self, source: &str, item: Item) -> Edit {
+    pub fn edit(&self, source: &str, item: &Item) -> Edit {
         let end = self.range.end;
         let tail = &source[end..];
         let edit = |replacement: String, offset| Edit {
             replacement,
             caret: self.range.start + offset,
         };
+        if matches!(self.access, Access::Index | Access::QuotedIndex(_)) {
+            let mut replacement = match self.access {
+                Access::QuotedIndex(quote) => {
+                    format!("{}{quote}", access::escape_key(&item.name, quote))
+                }
+                _ if item.style == Style::TableStringKey => {
+                    format!("\"{}\"", access::escape_key(&item.name, '"'))
+                }
+                _ => item.name.to_string(),
+            };
+            let trimmed = tail.trim_start_matches([' ', '\t']);
+            if trimmed.starts_with(']') {
+                let offset = replacement.len() + tail.len() - trimmed.len() + 1;
+                return edit(replacement, offset);
+            }
+            replacement.push(']');
+            let offset = replacement.len();
+            return edit(replacement, offset);
+        }
+        let name = if matches!(self.access, Access::GuiDot) {
+            let separator = if item.style == Style::Call { ':' } else { '.' };
+            format!("{separator}{}", item.name)
+        } else {
+            item.name.to_string()
+        };
         if item.style == Style::Call {
+            let length = name.len();
             if tail.trim_start().starts_with('(') {
                 let distance = tail.len() - tail.trim_start().len();
-                return edit(item.name.into(), item.name.len() + distance + 1);
+                return edit(name, length + distance + 1);
             }
-            return edit(format!("{}()", item.name), item.name.len() + 1);
+            return edit(format!("{name}()"), length + 1);
         }
         if item.style != Style::Keyword || !tail.split('\n').next().unwrap_or("").trim().is_empty()
         {
-            return edit(item.name.into(), item.name.len());
+            let length = name.len();
+            return edit(name, length);
         }
 
         let before = &source[..self.range.start];
@@ -683,7 +764,7 @@ impl Suggestions {
             .take_while(|byte| matches!(byte, b' ' | b'\t'))
             .count()];
         let block = |head: &str, cursor| edit(format!("{head}\n{indent}    \n{indent}end"), cursor);
-        match item.name {
+        match item.name.as_ref() {
             "if" => block("if  then", 3),
             "elseif" => edit("elseif  then".into(), 7),
             "for" => block("for  do", 4),
@@ -699,7 +780,7 @@ impl Suggestions {
             {
                 edit(format!("{} ", item.name), item.name.len() + 1)
             }
-            _ => edit(item.name.into(), item.name.len()),
+            _ => edit(item.name.to_string(), item.name.len()),
         }
     }
 }
@@ -708,9 +789,129 @@ impl Suggestions {
 mod tests {
     use super::*;
 
+    #[test]
+    fn suggests_defined_names_only_in_their_scope() {
+        let cases = [
+            ("local macroDelay = 250\nprint(macroD", "macroDelay"),
+            ("local first, second: number = 1, 2\nprint(sec", "second"),
+            (
+                "local function run(message: string)\n    print(messa",
+                "message",
+            ),
+            (
+                "for index, entry in pairs(items) do\n    print(entr",
+                "entry",
+            ),
+            ("globalDelay = 100\nlog(globalD", "globalDelay"),
+            ("local function sendMessage()\n    log(sendM", "sendMessage"),
+            ("local macroName = 3; print(macroN", "macroName"),
+        ];
+        for (source, name) in cases {
+            let list = suggest(source, source.len(), false).unwrap();
+            let item = list
+                .items
+                .iter()
+                .find(|item| item.name == name)
+                .expect(name);
+            assert_eq!(list.edit(source, item).replacement, name);
+        }
+        for (source, name) in [
+            ("do\n    local hidden = 1\nend\nprint(hidd", "hidden"),
+            (
+                "if true then\n    local sibling = 1\nelse\n    print(sibl",
+                "sibling",
+            ),
+            ("local recent = rece", "recent"),
+            (
+                "local data = {\n    property = true\n}\nprint(prope",
+                "property",
+            ),
+            ("for index, entry in getValues(entr", "entry"),
+        ] {
+            assert!(
+                suggest(source, source.len(), false)
+                    .is_none_or(|list| { !list.items.iter().any(|item| item.name == name) }),
+                "{name}"
+            );
+        }
+    }
+
+    #[test]
+    fn suggests_methods_and_signals_for_inferred_gui_objects() {
+        let declarations = concat!(
+            "local engine = defineGui(\"Imgui\")\n",
+            "local window = engine:window(\"Controls\")\n",
+            "local panel = window:tab(\"Main\"):folder(\"Settings\")\n",
+            "local mode = panel:dropdown(\"Mode\", {\"One\"})\n",
+            "local button = panel:button(\"Apply\")\n",
+            "local connection = button.pressed:connect(function() end)\n",
+        );
+        for (suffix, method, expected) in [
+            ("mode:ADD", "add_option", "mode:add_option(|)"),
+            ("mode.REM", "remove_option", "mode:remove_option(|)"),
+            ("button.pr", "pressed", "button.pressed|"),
+            ("button.pressed:CON", "connect", "button.pressed:connect(|)"),
+            ("connection:di", "disconnect", "connection:disconnect(|)"),
+            ("panel:dr", "dropdown", "panel:dropdown(|)"),
+        ] {
+            let source = format!("{declarations}{suffix}");
+            assert_eq!(
+                completed(&source, source.len(), method),
+                format!("{declarations}{expected}")
+            );
+        }
+        let source = format!("{declarations}mode:");
+        let choices = suggest(&source, source.len(), false).unwrap();
+        assert!(choices.items.iter().any(|item| item.name == "get"));
+        assert!(!choices.items.iter().any(|item| item.name == "slider"));
+        let source = "local window = gui:window(\"Basic\")\nwindow:";
+        let choices = suggest(source, source.len(), false).unwrap();
+        assert!(choices.items.iter().any(|item| item.name == "button"));
+        assert!(!choices.items.iter().any(|item| item.name == "dropdown"));
+        assert!(!choices.items.iter().any(|item| item.name == "collapse"));
+        let source = format!("{declarations}do\n    local mode = {}\n    mode:ad", "{}");
+        assert!(suggest(&source, source.len(), false).is_none());
+    }
+
+    #[test]
+    fn suggests_table_keys_and_keeps_their_original_spelling() {
+        let declarations = concat!(
+            "local Config = { DisplayName = 'demo', [\"Max-Speed\"] = 8, ",
+            "Nested = { Enabled = true }, [12] = 'explicit', 'first' }\n",
+            "local Alias = Config\n",
+            "Alias.Nested.ExtraKey = false\n",
+        );
+        for (suffix, key, expected) in [
+            ("Config.dis", "DisplayName", "Config.DisplayName|"),
+            ("Config.Nested.en", "Enabled", "Config.Nested.Enabled|"),
+            ("Config.Nested.extra", "ExtraKey", "Config.Nested.ExtraKey|"),
+            ("Config[\"max", "Max-Speed", "Config[\"Max-Speed\"]|"),
+            ("Config[", "Max-Speed", "Config[\"Max-Speed\"]|"),
+            ("Config[1", "12", "Config[12]|"),
+            ("Config[", "1", "Config[1]|"),
+            ("print(con", "Config", "print(Config|"),
+        ] {
+            let source = format!("{declarations}{suffix}");
+            assert_eq!(
+                completed(&source, source.len(), key),
+                format!("{declarations}{expected}")
+            );
+        }
+        let source = format!("{declarations}Config[\"ma\"]");
+        let caret = source.len() - 2;
+        assert_eq!(
+            completed(&source, caret, "Max-Speed"),
+            format!("{declarations}Config[\"Max-Speed\"]|")
+        );
+        let source = format!("{declarations}Config.ma");
+        assert!(suggest(&source, source.len(), false).is_none());
+        assert_eq!(completed("MATH", 4, "math"), "math|");
+        assert_eq!(completed("math.SI", 7, "sin"), "math.sin(|)");
+    }
+
     fn completed(source: &str, position: usize, name: &str) -> String {
         let suggestions = suggest(source, position, false).unwrap();
-        let item = *suggestions
+        let item = suggestions
             .items
             .iter()
             .find(|item| item.name == name)

@@ -152,7 +152,7 @@ impl Popup {
             .as_ref()
             .and_then(|list| list.items.get(item.itemID as usize))
         {
-            theme::suggestion(item, candidate.name, candidate.detail);
+            theme::suggestion(item, &candidate.name, candidate.detail);
         }
     }
 
@@ -187,7 +187,7 @@ impl Popup {
             .suggestions
             .as_ref()
             .and_then(|list| list.items.get(index))
-            .copied()
+            .cloned()
         else {
             return false;
         };
@@ -201,7 +201,7 @@ impl Popup {
         if !suggestions.items.contains(&item) {
             return false;
         }
-        let edit = suggestions.edit(&source, item);
+        let edit = suggestions.edit(&source, &item);
         let start = source[..suggestions.range.start].encode_utf16().count();
         let end = start + source[suggestions.range.clone()].encode_utf16().count();
         source.replace_range(suggestions.range, &edit.replacement);

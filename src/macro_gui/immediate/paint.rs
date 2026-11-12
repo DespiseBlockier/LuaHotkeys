@@ -1,7 +1,7 @@
 use imgui::{Condition, FontId, MouseButton, Style, StyleColor, StyleVar, Ui, WindowFlags};
 use winit::window::Window as HostWindow;
 
-use super::TITLE_HEIGHT;
+use super::{Drag, TITLE_HEIGHT};
 use crate::macro_gui::{rgba, Control, ControlValue, Event, Gui, Kind, Theme, Window};
 
 const TAB_HEIGHT: f32 = 30.0;
@@ -84,6 +84,8 @@ pub(super) struct PanelPaint {
     events: Vec<Event>,
     hovered: Option<usize>,
     recording_hovered: bool,
+    drag: Drag,
+    palette: Option<usize>,
 }
 
 impl PanelPaint {
@@ -95,6 +97,8 @@ impl PanelPaint {
             events: Vec::new(),
             hovered: None,
             recording_hovered: false,
+            drag: Drag::default(),
+            palette: None,
         }
     }
 
@@ -122,9 +126,7 @@ impl PanelPaint {
         drop(draw);
         ui.set_cursor_pos([26.0, 0.0]);
         ui.invisible_button("##drag", [(width - 26.0).max(1.0), title_height]);
-        if ui.is_item_clicked() {
-            let _ = host.drag_window();
-        }
+        self.drag.update(ui, host, ui.is_item_clicked());
         ui.set_cursor_pos([4.0, 1.0]);
         let _normal = ui.push_style_color(StyleColor::Button, [0.0; 4]);
         let _hover = ui.push_style_color(StyleColor::ButtonHovered, [1.0, 1.0, 1.0, 0.16]);
@@ -135,7 +137,7 @@ impl PanelPaint {
         chevron(ui, [14.0, 11.0], !window.collapsed, theme.text);
     }
 
-    pub(super) fn draw(&mut self, ui: &Ui, gui: &Gui, host: &HostWindow) {
+    pub(super) fn draw(&mut self, ui: &Ui, gui: &Gui, host: &HostWindow) -> Option<usize> {
         self.hovered = None;
         self.recording_hovered = false;
         let window = gui.window();
@@ -198,6 +200,7 @@ impl PanelPaint {
         for event in self.events.drain(..) {
             gui.event(event);
         }
+        self.palette.take()
     }
 
     fn tabs(&mut self, ui: &Ui, window: &Window, width: f32, top: f32) {
@@ -393,23 +396,15 @@ impl PanelPaint {
                 control.tint.map_or(theme.dropdown, rgba),
             ),
             (Kind::Color, ControlValue::Color(rgb)) => {
-                let [r, g, b, _] = rgba(*rgb);
-                let mut color = [r, g, b];
-                let _frame = control
-                    .tint
-                    .map(|color| ui.push_style_color(StyleColor::FrameBg, rgba(color)));
                 if ui
-                    .color_edit3_config(&control.label, &mut color)
-                    .inputs(false)
+                    .color_button_config("##swatch", rgba(*rgb))
+                    .size([20.0, 20.0])
                     .build()
                 {
-                    let [r, g, b] =
-                        color.map(|channel| (channel * 255.0).round().clamp(0.0, 255.0) as u32);
-                    self.events.push(Event::Change(
-                        id,
-                        ControlValue::Color((r << 16) | (g << 8) | b),
-                    ));
+                    self.palette = Some(id);
                 }
+                ui.same_line();
+                ui.text(&control.label);
             }
             _ => unreachable!("GUI control value"),
         }

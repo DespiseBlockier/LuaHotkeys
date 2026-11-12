@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{hash_map::Entry, HashMap},
     error::Error,
     io,
     os::fd::{AsRawFd, RawFd},
@@ -20,7 +20,7 @@ use xkeysym::key as sym;
 
 use crate::{
     macro_gui::Gui,
-    runtime::{Binding, Output},
+    runtime::{Binding, HotkeyTrigger, Output},
     shortcut::{
         Combination, Key, ModifierKey, NumpadOperator, ALT, CONTROL, NAMED_KEYS, SHIFT, SUPER,
     },
@@ -251,15 +251,22 @@ struct ModifierTaps<'a> {
 }
 
 impl<'a> ModifierTaps<'a> {
-    fn press(&mut self, code: Keycode, recording: bool) {
+    fn press(&mut self, code: Keycode, recording: bool) -> Option<&'a Binding> {
         if self.down.contains(&code) {
-            return;
+            return None;
         }
-        self.pending = (!recording && self.down.is_empty() && self.bindings.contains_key(&code))
-            .then_some(code);
+        let binding = if !recording && self.down.is_empty() {
+            self.bindings.get(&code).copied()
+        } else {
+            None
+        };
+        self.pending = binding
+            .filter(|binding| binding.trigger == HotkeyTrigger::Release)
+            .map(|_| code);
         if self.modifiers.contains(&code) {
             self.down.push(code);
         }
+        binding.filter(|binding| binding.trigger == HotkeyTrigger::Press)
     }
 
     fn release(&mut self, code: Keycode) -> Option<&'a Binding> {
@@ -438,7 +445,11 @@ impl<'a> Hotkeys<'a> {
             Event::XinputRawKeyPress(event) => {
                 if u32::from(event.flags & xinput::KeyEventFlags::KEY_REPEAT) == 0 {
                     if let Ok(code) = Keycode::try_from(event.detail) {
-                        self.taps.press(code, !self.registered);
+                        if let Some(binding) = self.taps.press(code, !self.registered) {
+                            if !gui.record_key(binding.combo) {
+                                binding.activate(lua, output);
+                            }
+                        }
                     }
                 }
             }
@@ -456,8 +467,14 @@ impl<'a> Hotkeys<'a> {
                     code == event.detail || !matches!(binding.combo.key, Key::Modifier(_))
                 });
                 let mask = u16::from(event.state) & 0xff & !self.locks;
-                if let Some(binding) = self.active.get(&(event.detail, mask)) {
-                    self.held.entry(event.detail).or_insert(*binding);
+                if let (Some(&binding), Entry::Vacant(held)) = (
+                    self.active.get(&(event.detail, mask)),
+                    self.held.entry(event.detail),
+                ) {
+                    held.insert(binding);
+                    if binding.trigger == HotkeyTrigger::Press && !gui.record_key(binding.combo) {
+                        binding.activate(lua, output);
+                    }
                 }
             }
             Event::KeyRelease(event) => {
@@ -469,7 +486,7 @@ impl<'a> Hotkeys<'a> {
                     return Ok(());
                 }
                 if let Some(binding) = self.held.remove(&event.detail) {
-                    if !gui.record_key(binding.combo) {
+                    if binding.trigger == HotkeyTrigger::Release && !gui.record_key(binding.combo) {
                         binding.activate(lua, output);
                     }
                 }

@@ -17,6 +17,10 @@ pub struct Token<'a> {
 }
 
 impl Token<'_> {
+    pub fn is_closed(self) -> bool {
+        self.closed
+    }
+
     pub fn blocks_completion(self, caret: usize) -> bool {
         matches!(self.kind, Kind::String | Kind::Comment)
             && self.start < caret

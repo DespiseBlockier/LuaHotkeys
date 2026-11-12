@@ -1,6 +1,6 @@
 # LuaHotkeys releases
 
-After each LuaHotkeys update is built and verified, ask the user whether to publish it to GitHub. An explicit request to publish the current update is sufficient.
+Implement each update, run development tests, and give the user the development launcher so they can try the working tree. Wait for explicit approval for that update before creating release builds. Then build, validate, and publish the release.
 
 Include both the Windows MSI installer and the portable ZIP in each GitHub release.
 

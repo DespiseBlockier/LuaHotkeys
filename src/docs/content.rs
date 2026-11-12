@@ -31,10 +31,11 @@ pub const CATEGORIES: &[Category] = &[
         description: "Declare global shortcuts when a script starts. Each shortcut runs a Lua function when you press it.",
         functions: &[Function {
             name: "hotkey",
-            description: "Registers a global key combination. Declare it at the top level of your script so LuaHotkeys can bind it when you click Run.",
+            description: "Registers a global key combination at script startup. The callback normally runs when you release the shortcut. Pass \"press\" as the third argument to run it as soon as you complete the combination. A held shortcut fires once.",
             parameters: &[
                 ("combo: Combo", "The key to listen for. See Types → Combo for every supported key."),
-                ("callback: HotkeyCallback", "The Lua function to run when the shortcut is pressed."),
+                ("callback: HotkeyCallback", "The Lua function to run."),
+                ("trigger: string?", "Use \"release\" (the default) or \"press\". Modifiers can still be held during a press callback."),
             ],
             returns: None,
             example: STARTER,
@@ -190,7 +191,7 @@ window:label("Dear ImGui is running")"##,
             },
             Function {
                 name: "tab:color",
-                description: "Adds an Imgui color picker. Values are #RRGGBB strings. Use set_color(value) on another Imgui control to change its display color, or set_color(nil) to restore the theme color.",
+                description: "Adds an Imgui color swatch that opens its own movable desktop palette. Values are #RRGGBB strings. Use set_color(value) on another Imgui control to change its display color, or set_color(nil) to restore the theme color.",
                 parameters: &[("label: string", "Label next to the picker."), ("initial: string?", "Starting color. Defaults to #FF85A2.")],
                 returns: Some("A picker with get(), set(), and changed."),
                 example: r##"local color = tab:color("Button color", "#FF85A2")

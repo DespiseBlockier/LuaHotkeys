@@ -138,7 +138,7 @@ A tab, folder, or dock accepts the same control constructors as the window. Add 
 | `panel:folder(label, open?)` | A collapsible group. Use `get()`, `set(boolean)`, or `switch()` to read or change its state. |
 | `panel:dock()` | A row that puts its controls side by side. |
 | `panel:dropdown(label, items, initial?)` | A dropdown with case-insensitive search. Pass an array of unique names and an optional starting selection. |
-| `panel:color(label, initial?)` | A color picker whose value is a `#RRGGBB` string. |
+| `panel:color(label, initial?)` | A color swatch that opens a movable desktop palette. Its value is a `#RRGGBB` string. |
 
 Use `dropdown:add_option(name)` and `dropdown:remove_option(name)` to update the list. Removing the selected item clears the selection and emits `changed(nil)`. Call `dropdown:set(nil)` to clear it while keeping the option. `control:set_color("#FF85A2")` sets a control's display color. `set_color(nil)` restores its theme color. For a color picker, `get()` and `set(color)` read and set the selected color. `control:destroy()` removes a control, including all children of a group.
 

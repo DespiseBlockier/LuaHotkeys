@@ -38,7 +38,9 @@ The editor also opens ordinary `.lua` files. Use **Restart** to apply changes to
 
 Click **Docs** to browse the offline LuaHotkeys reference by category. Each function has a syntax-colored signature, a description, and a copyable example. The editor and the reference use the same colors for Lua keywords, built-in libraries and their members, and LuaHotkeys functions.
 
-The editor suggests Lua keywords and functions as you type. Use **Ctrl+Space** to open suggestions on demand, the arrow keys to select, and **Tab** or **Enter** to insert. **Escape** closes the list.
+The editor shows line numbers beside the script and pairs quotes, parentheses, brackets, and braces as you type. Press Enter after a function header to create an indented body and its closing `end`. For an inline callback, the call's closing parenthesis moves after `end`.
+
+The editor suggests Lua keywords, functions, and variables in scope as you type. For a GUI control, type `:` for its methods or `.` for members and signals. For a table defined in the script, type `.` for named keys or `[` for quoted keys and numeric indexes. Suggestions match regardless of case and insert the spelling from the declaration. Use **Ctrl+Space** to open suggestions on demand, the arrow keys to select, and **Tab** or **Enter** to insert. **Escape** closes the list.
 
 With the suggestion list closed, **Tab** indents to four-space stops and **Shift+Tab** dedents. **Enter** follows the current Lua scope.
 
@@ -61,11 +63,23 @@ end)
 
 Annotations and aliases are erased before the entry script runs in Lua 5.1. API functions validate arguments at runtime. Modules loaded by Lua's `require` use standard Lua 5.1 syntax.
 
+Hotkey callbacks run on release by default. Pass `"press"` as the third argument to fire immediately when you complete the shortcut.
+
+```lua
+hotkey("Ctrl+Alt+J", function()
+    log("Shortcut pressed")
+end, "press")
+```
+
 ## Macro windows
 
 Use `gui:window("Macro controls")` for an ordinary window or `defineGui("Imgui")` to use Dear ImGui. Both engines provide buttons, hover events, sliders, toggles, labels, text fields, and keybind pickers. Connect Lua callbacks to each control's signals.
 
 The Imgui engine uses a pink, collapsible panel styled after MainPink. It also adds tabs, folders, horizontal rows, searchable dropdowns, and color pickers. Run [imgui-demo.lhk](packaging/imgui-demo.lhk) to see them together.
+
+## Try the working tree on Windows
+
+Double-click [Start-Dev.cmd](Start-Dev.cmd) to open the development editor. It runs the current source through Cargo's development profile. You can also run `Start-Dev.cmd --edit packaging\imgui-demo.lhk` to open the ImGui demo. The launcher uses the 32-bit Lua 5.1 installation and the `i686-pc-windows-msvc` Rust target.
 
 Open **Docs → Macro windows** in the editor or see the [GUI reference and examples](packaging/Gui.md).
 

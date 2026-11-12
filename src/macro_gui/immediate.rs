@@ -6,9 +6,10 @@ use std::{
 };
 
 use glutin::{
-    config::ConfigTemplateBuilder,
+    config::{Config, ConfigTemplateBuilder},
     context::{
-        ContextApi, ContextAttributesBuilder, NotCurrentGlContext, PossiblyCurrentContext, Version,
+        ContextApi, ContextAttributesBuilder, NotCurrentGlContext, PossiblyCurrentContext,
+        PossiblyCurrentGlContext, Version,
     },
     display::{GetGlDisplay, GlDisplay},
     surface::{GlSurface, Surface, SurfaceAttributesBuilder, SwapInterval, WindowSurface},
@@ -37,6 +38,7 @@ use crate::{
 };
 
 mod paint;
+mod palette;
 const TITLE_HEIGHT: u32 = 22;
 const MERRIWEATHER: &[u8] = include_bytes!("immediate/Merriweather-Regular.ttf");
 
@@ -64,16 +66,6 @@ pub fn run(
     let mut imgui = imgui::Context::create();
     imgui.set_ini_filename(None);
     paint::apply_theme(imgui.style_mut(), theme);
-    let add_font = |imgui: &mut imgui::Context, size_pixels| {
-        imgui.fonts().add_font(&[FontSource::TtfData {
-            data: MERRIWEATHER,
-            size_pixels,
-            config: Some(FontConfig {
-                glyph_ranges: FontGlyphRanges::from_slice(&[0x20, 0x024F, 0x2000, 0x206F, 0]),
-                ..FontConfig::default()
-            }),
-        }])
-    };
     add_font(&mut imgui, 14.0);
     let title_font = add_font(&mut imgui, 16.0);
     let mut paint = paint::PanelPaint::new(title_font);
@@ -93,21 +85,35 @@ pub fn run(
     let mut rounded_size = host.window.inner_size();
     let mut modifiers = ModifiersState::empty();
     let mut failure = None;
+    let mut imgui = Some(imgui);
+    let mut palette = None::<palette::Palette>;
 
     #[allow(deprecated)]
-    event_loop.run(|event, target| {
+    let result = event_loop.run(|event, target| {
         let about_to_wait = matches!(event, WindowEventLoop::AboutToWait);
         let recording = gui.recording();
-        let recording_input = recording.is_some()
-            && matches!(
-                &event,
-                WindowEventLoop::WindowEvent { event: WindowEvent::KeyboardInput { event, .. }, .. }
-                    if event.state.is_pressed()
-            );
-        if !recording_input {
-            platform.handle_event(imgui.io_mut(), &host.window, &event);
-        }
         let result = (|| -> Result<(), Box<dyn Error>> {
+            if let Some(palette) = palette.as_mut() {
+                if matches!(&event, WindowEventLoop::WindowEvent { window_id, .. } if *window_id == palette.id()) {
+                    let suspended = imgui.take().expect("main ImGui context").suspend();
+                    let result = palette.handle(&event, gui);
+                    imgui = Some(activate(suspended)?);
+                    result?;
+                    gui.dispatch(lua, output);
+                    return Ok(());
+                }
+            }
+            let mut open_palette = None;
+            let main = imgui.as_mut().expect("main ImGui context");
+            let recording_input = recording.is_some()
+                && matches!(
+                    &event,
+                    WindowEventLoop::WindowEvent { event: WindowEvent::KeyboardInput { event, .. }, .. }
+                        if event.state.is_pressed()
+                );
+            if !recording_input {
+                platform.handle_event(main.io_mut(), &host.window, &event);
+            }
             match event {
                 WindowEventLoop::WindowEvent { event, .. } => match event {
                     WindowEvent::CloseRequested => gui.event(Event::Close),
@@ -130,6 +136,7 @@ pub fn run(
                         if let (Some(width), Some(height)) =
                             (NonZeroU32::new(size.width), NonZeroU32::new(size.height))
                         {
+                            host.make_current()?;
                             host.surface.resize(&host.context, width, height);
                             if size != rounded_size {
                                 round_window(&host.window, size, theme.rounding);
@@ -138,27 +145,42 @@ pub fn run(
                         }
                     }
                     WindowEvent::RedrawRequested if visible && !occluded => {
+                        host.make_current()?;
                         let now = Instant::now();
-                        imgui
+                        main
                             .io_mut()
                             .update_delta_time(now.duration_since(last_frame));
                         last_frame = now;
-                        platform.prepare_frame(imgui.io_mut(), &host.window)?;
-                        let ui = imgui.frame();
-                        paint.draw(ui, gui, &host.window);
+                        platform.prepare_frame(main.io_mut(), &host.window)?;
+                        let ui = main.frame();
+                        open_palette = paint.draw(ui, gui, &host.window);
                         platform.prepare_render(ui, &host.window);
                         unsafe {
                             let [r, g, b, a] = theme.background;
                             renderer.gl_context().clear_color(r, g, b, a);
                             renderer.gl_context().clear(glow::COLOR_BUFFER_BIT);
                         }
-                        renderer.render(imgui.render())?;
+                        renderer.render(main.render())?;
                         host.surface.swap_buffers(&host.context)?;
                     }
                     _ => {}
                 },
                 WindowEventLoop::AboutToWait => hotkeys()?,
                 _ => {}
+            }
+            if let Some(id) = open_palette {
+                if palette.is_none() {
+                    let suspended = imgui.take().expect("main ImGui context").suspend();
+                    let result = palette::Palette::new(target, &host, theme);
+                    imgui = Some(activate(suspended)?);
+                    match result {
+                        Ok(window) => palette = Some(window),
+                        Err(error) => output('E', &format!("Could not open the color picker. {error}")),
+                    }
+                }
+                if let Some(palette) = palette.as_mut() {
+                    palette.show(&host, gui, id);
+                }
             }
             gui.dispatch(lua, output);
             for update in gui.updates() {
@@ -177,6 +199,9 @@ pub fn run(
                 host.window.set_visible(visible);
                 next_frame = Instant::now();
             }
+            if let Some(palette) = palette.as_mut() {
+                palette.sync(window);
+            }
             if about_to_wait {
                 let now = Instant::now();
                 if now >= next_frame {
@@ -191,6 +216,9 @@ pub fn run(
                     } else {
                         Duration::from_millis(32)
                     };
+                    if let Some(palette) = &palette {
+                        palette.redraw();
+                    }
                     next_frame = now + interval;
                 }
                 target.set_control_flow(ControlFlow::WaitUntil(next_frame));
@@ -201,10 +229,79 @@ pub fn run(
             failure = Some(error);
             target.exit();
         }
-    })?;
+    });
+    drop(palette);
+    host.make_current()?;
+    result?;
     match failure {
         Some(error) => Err(error),
         None => Ok(()),
+    }
+}
+
+fn activate(context: imgui::SuspendedContext) -> io::Result<imgui::Context> {
+    context
+        .activate()
+        .map_err(|_| io::Error::other("Could not activate the ImGui context."))
+}
+
+fn add_font(imgui: &mut imgui::Context, size_pixels: f32) -> imgui::FontId {
+    imgui.fonts().add_font(&[FontSource::TtfData {
+        data: MERRIWEATHER,
+        size_pixels,
+        config: Some(FontConfig {
+            glyph_ranges: FontGlyphRanges::from_slice(&[0x20, 0x024F, 0x2000, 0x206F, 0]),
+            ..FontConfig::default()
+        }),
+    }])
+}
+
+#[derive(Default)]
+struct Drag {
+    #[cfg(windows)]
+    origin: Option<(
+        winit::dpi::PhysicalPosition<i32>,
+        winit::dpi::PhysicalPosition<i32>,
+    )>,
+}
+
+impl Drag {
+    #[cfg(windows)]
+    fn update(&mut self, ui: &imgui::Ui, window: &HostWindow, started: bool) {
+        use windows_sys::Win32::{Foundation::POINT, UI::WindowsAndMessaging::GetCursorPos};
+        use winit::dpi::PhysicalPosition;
+
+        if !ui.is_mouse_down(imgui::MouseButton::Left) {
+            self.origin = None;
+            return;
+        }
+        if self.origin.is_none() && !started {
+            return;
+        }
+        let mut position = POINT::default();
+        if unsafe { GetCursorPos(&mut position) } == 0 {
+            return;
+        }
+        let cursor = PhysicalPosition::new(position.x, position.y);
+        if started {
+            self.origin = window.outer_position().ok().map(|origin| (cursor, origin));
+        }
+        if let Some((anchor, origin)) = self.origin {
+            let next = PhysicalPosition::new(
+                origin.x + cursor.x - anchor.x,
+                origin.y + cursor.y - anchor.y,
+            );
+            if window.outer_position().ok() != Some(next) {
+                window.set_outer_position(next);
+            }
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    fn update(&mut self, _ui: &imgui::Ui, window: &HostWindow, started: bool) {
+        if started {
+            let _ = window.drag_window();
+        }
     }
 }
 
@@ -213,6 +310,7 @@ struct Host {
     surface: Surface<WindowSurface>,
     window: HostWindow,
     full_size: LogicalSize<u32>,
+    config: Config,
 }
 
 struct Height {
@@ -326,6 +424,15 @@ impl Host {
             )?;
         let window =
             window.ok_or_else(|| io::Error::other("Could not create the Dear ImGui window."))?;
+        Self::from_window(window, config, full_size, rounding)
+    }
+
+    fn from_window(
+        window: HostWindow,
+        config: Config,
+        full_size: LogicalSize<u32>,
+        rounding: f32,
+    ) -> Result<Self, Box<dyn Error>> {
         let handle = window.window_handle()?.as_raw();
         let display = config.display();
         let context = unsafe {
@@ -369,6 +476,7 @@ impl Host {
             surface,
             context,
             full_size,
+            config,
         })
     }
 
@@ -378,6 +486,13 @@ impl Host {
                 self.context.display().get_proc_address(name).cast()
             })
         }
+    }
+
+    fn make_current(&self) -> Result<(), glutin::error::Error> {
+        if !self.context.is_current() {
+            self.context.make_current(&self.surface)?;
+        }
+        Ok(())
     }
 }
 

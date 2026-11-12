@@ -20,8 +20,11 @@ use windows_sys::Win32::{
     },
 };
 
-use crate::shortcut::{
-    Combination, Key, ModifierKey, NumpadOperator, ALT, CONTROL, NAMED_KEYS, SHIFT, SUPER,
+use crate::{
+    runtime::HotkeyTrigger,
+    shortcut::{
+        Combination, Key, ModifierKey, NumpadOperator, ALT, CONTROL, NAMED_KEYS, SHIFT, SUPER,
+    },
 };
 
 fn virtual_key(key: Key) -> Option<u16> {
@@ -173,10 +176,10 @@ pub fn wait_for_release(combo: Combination) {
     }
 }
 
-pub fn register(id: i32, combo: Combination) -> io::Result<()> {
+pub fn register(id: i32, combo: Combination, trigger: HotkeyTrigger) -> io::Result<()> {
     let (code, combo) = resolve(combo)?;
     if let Key::Modifier(key) = combo.key {
-        return register_modifier(id, code, key, combo.modifiers);
+        return register_modifier(id, code, key, combo.modifiers, trigger);
     }
     if unsafe {
         RegisterHotKey(
@@ -224,13 +227,20 @@ struct ModifierBinding {
     modifiers: u32,
     down: bool,
     pending: bool,
+    trigger: HotkeyTrigger,
 }
 
 thread_local! {
     static MODIFIER_HOTKEYS: RefCell<ModifierHotkeys> = RefCell::new(ModifierHotkeys::default());
 }
 
-fn register_modifier(id: i32, code: u16, key: ModifierKey, modifiers: u32) -> io::Result<()> {
+fn register_modifier(
+    id: i32,
+    code: u16,
+    key: ModifierKey,
+    modifiers: u32,
+    trigger: HotkeyTrigger,
+) -> io::Result<()> {
     if modifiers & key.flag() != 0 {
         return Err(io::Error::other(
             "The main key already supplies that modifier.",
@@ -258,6 +268,7 @@ fn register_modifier(id: i32, code: u16, key: ModifierKey, modifiers: u32) -> io
             modifiers,
             down: false,
             pending: false,
+            trigger,
         });
         Ok(())
     })
@@ -287,17 +298,18 @@ unsafe extern "system" fn modifier_hook(action: i32, message: WPARAM, data: LPAR
                             .into_iter()
                             .filter(|&(_, key)| is_down(key))
                             .fold(0, |mask, (flag, _)| mask | flag);
-                            binding.pending = held & !binding.flag == binding.modifiers;
+                            if held & !binding.flag == binding.modifiers {
+                                if binding.trigger == HotkeyTrigger::Press {
+                                    post_hotkey(binding.id);
+                                } else {
+                                    binding.pending = true;
+                                }
+                            }
                         }
                         WM_KEYUP | WM_SYSKEYUP if code == binding.code => {
                             binding.down = false;
                             if std::mem::take(&mut binding.pending) {
-                                PostThreadMessageW(
-                                    GetCurrentThreadId(),
-                                    WM_HOTKEY,
-                                    binding.id as usize,
-                                    0,
-                                );
+                                post_hotkey(binding.id);
                             }
                         }
                         _ => {}
@@ -307,6 +319,10 @@ unsafe extern "system" fn modifier_hook(action: i32, message: WPARAM, data: LPAR
         }
     }
     CallNextHookEx(null_mut(), action, message, data)
+}
+
+unsafe fn post_hotkey(id: i32) {
+    PostThreadMessageW(GetCurrentThreadId(), WM_HOTKEY, id as usize, 0);
 }
 
 fn keyboard(key: u16, scan: u16, mut flags: u32) -> INPUT {

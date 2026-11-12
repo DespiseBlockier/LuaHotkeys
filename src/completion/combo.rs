@@ -1,6 +1,6 @@
 use std::collections::{HashSet, VecDeque};
 
-use super::{value, Suggestions};
+use super::{value, Access, Suggestions};
 use crate::{
     lua_syntax::{Kind, Token, Tokens},
     shortcut::{modifier_flag, MODIFIERS, NAMED_KEYS},
@@ -101,11 +101,12 @@ pub(super) fn suggest(
         );
     }
     let mut names = HashSet::new();
-    items.retain(|item| names.insert(item.name));
+    items.retain(|item| names.insert(item.name.clone()));
     (!items.is_empty()).then_some(Suggestions {
         range: start..end,
         items,
         expression: false,
+        access: Access::Plain,
     })
 }
 

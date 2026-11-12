@@ -16,9 +16,31 @@ use crate::{macro_gui::Gui, script_types, shortcut};
 
 pub type Output = fn(char, &str);
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HotkeyTrigger {
+    Release,
+    Press,
+}
+
+impl HotkeyTrigger {
+    fn from_lua(value: Value) -> mlua::Result<Self> {
+        if value.is_nil() {
+            return Ok(Self::Release);
+        }
+        match strict_text(value)?.to_str()?.as_ref() {
+            "release" => Ok(Self::Release),
+            "press" => Ok(Self::Press),
+            _ => Err(Error::runtime(
+                "Hotkey trigger must be 'release' or 'press'.",
+            )),
+        }
+    }
+}
+
 pub struct Binding {
     pub name: String,
     pub combo: shortcut::Combination,
+    pub trigger: HotkeyTrigger,
     callback: RegistryKey,
 }
 
@@ -65,23 +87,27 @@ pub fn run(source: &str, name: &str, output: Output) -> mlua::Result<()> {
     let (registered, seen, accepting) = (bindings.clone(), unique, loading.clone());
     globals.set(
         "hotkey",
-        lua.create_function(move |lua, (name, callback): (Value, Function)| {
-            if !accepting.get() {
-                return Err(Error::runtime("Declare hotkeys when the script starts."));
-            }
-            let name = strict_text(name)?.to_str()?.to_owned();
-            let combo = shortcut::parse(&name).map_err(Error::runtime)?;
-            platform::validate_hotkey(combo).map_err(Error::runtime)?;
-            if !seen.borrow_mut().insert(combo) {
-                return Err(Error::runtime(format!("Duplicate hotkey '{name}'.")));
-            }
-            registered.borrow_mut().push(Binding {
-                name,
-                combo,
-                callback: lua.create_registry_value(callback)?,
-            });
-            Ok(())
-        })?,
+        lua.create_function(
+            move |lua, (name, callback, trigger): (Value, Function, Value)| {
+                if !accepting.get() {
+                    return Err(Error::runtime("Declare hotkeys when the script starts."));
+                }
+                let name = strict_text(name)?.to_str()?.to_owned();
+                let combo = shortcut::parse(&name).map_err(Error::runtime)?;
+                let trigger = HotkeyTrigger::from_lua(trigger)?;
+                platform::validate_hotkey(combo).map_err(Error::runtime)?;
+                if !seen.borrow_mut().insert(combo) {
+                    return Err(Error::runtime(format!("Duplicate hotkey '{name}'.")));
+                }
+                registered.borrow_mut().push(Binding {
+                    name,
+                    combo,
+                    trigger,
+                    callback: lua.create_registry_value(callback)?,
+                });
+                Ok(())
+            },
+        )?,
     )?;
 
     globals.set(
