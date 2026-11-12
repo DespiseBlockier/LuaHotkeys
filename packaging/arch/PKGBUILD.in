@@ -1,0 +1,33 @@
+
+pkgname=luahotkeys
+pkgver=@VERSION@
+pkgrel=1
+pkgdesc='Run LuaHotkeys macro scripts on X11'
+arch=('x86_64')
+url='https://github.com/DespiseBlockier/LuaHotkeys'
+# The upstream project has not declared a distribution license.
+license=('LicenseRef-Unspecified')
+depends=('glibc' 'gcc-libs' 'xdotool' 'xdg-utils')
+makedepends=('rust' 'gcc')
+source=("$pkgname-$pkgver.tar.gz")
+sha256sums=('@SHA256@')
+# Arch's GCC LTO objects cannot be linked by Rust's LLVM linker.
+options=('!debug' '!lto')
+
+build() {
+    cd "$pkgname-$pkgver"
+    cargo build --release --locked --offline --bin luahotkeys
+}
+
+check() {
+    cd "$pkgname-$pkgver"
+    cargo test --release --locked --offline --bin luahotkeys
+}
+
+package() {
+    cd "$pkgname-$pkgver"
+    install -Dm755 target/release/luahotkeys "$pkgdir/usr/bin/luahotkeys"
+    install -Dm644 packaging/example.lhk "$pkgdir/usr/share/doc/$pkgname/example.lhk"
+    install -Dm644 packaging/Linux.md "$pkgdir/usr/share/doc/$pkgname/Linux.md"
+    install -Dm644 packaging/THIRD-PARTY-LINUX.txt "$pkgdir/usr/share/licenses/$pkgname/THIRD-PARTY.txt"
+}

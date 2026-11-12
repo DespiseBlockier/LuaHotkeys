@@ -1,6 +1,6 @@
 # LuaHotkeys
 
-A native Windows automation app written in Rust for global hotkeys and macros in Lua 5.1.5. It includes a syntax-colored editor, a system tray control, and an activity log for script output and errors.
+A Rust automation app for global hotkeys and macros in Lua 5.1.5. The Windows app includes a syntax-colored editor, system tray control, and activity log. The [Linux runner](packaging/Linux.md) runs scripts from the terminal on X11 and has package recipes for Arch and openSUSE Tumbleweed.
 
 ## Quick start
 

@@ -2,6 +2,9 @@ use std::env;
 use winresource::{VersionInfo, WindowsResource};
 
 fn main() {
+    if env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("windows") {
+        return;
+    }
     println!("cargo:rerun-if-changed=VERSION");
     println!("cargo:rerun-if-changed=app.manifest");
     println!("cargo:rerun-if-changed=assets/LuaHotkeys.ico");

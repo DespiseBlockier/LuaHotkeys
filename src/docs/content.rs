@@ -1,7 +1,7 @@
 use std::fmt::Write;
 
 use super::types::{TYPES, TYPE_EXAMPLE};
-use crate::{completion, highlight, input, theme};
+use crate::{completion, highlight, shortcut, theme};
 
 pub struct Category {
     pub name: &'static str,
@@ -304,7 +304,7 @@ impl Document {
         self.argument("Letters and digits", "A through Z and 0 through 9.");
         self.argument("Function keys", "F1 through F24. F12 can be sent with press, but Windows reserves it for the debugger and hotkey cannot register it.");
         self.argument("Number pad", "NumPad0 through NumPad9.");
-        for (group, keys) in input::NAMED_KEYS {
+        for (group, keys) in shortcut::NAMED_KEYS {
             let names = keys
                 .iter()
                 .map(|(name, _)| *name)

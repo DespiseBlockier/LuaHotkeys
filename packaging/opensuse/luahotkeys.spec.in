@@ -1,0 +1,39 @@
+
+Name:           luahotkeys
+Version:        @VERSION@
+Release:        0
+Summary:        Run LuaHotkeys macro scripts on X11
+# The upstream project has not declared a distribution license.
+License:        Unspecified
+URL:            https://github.com/DespiseBlockier/LuaHotkeys
+Source0:        %{name}-%{version}.tar.gz
+BuildRequires:  cargo >= 1.88
+BuildRequires:  gcc
+BuildRequires:  rust >= 1.88
+Requires:       xdg-utils
+Requires:       xdotool
+
+%description
+Runs LuaHotkeys scripts using Lua 5.1, including typed annotations and global
+shortcuts under X11.
+
+%prep
+%autosetup
+
+%build
+cargo build --release --locked --offline --bin luahotkeys
+
+%install
+install -Dm755 target/release/luahotkeys %{buildroot}%{_bindir}/luahotkeys
+install -Dm644 packaging/example.lhk %{buildroot}%{_docdir}/%{name}/example.lhk
+install -Dm644 packaging/Linux.md %{buildroot}%{_docdir}/%{name}/Linux.md
+
+%check
+cargo test --locked --offline --bin luahotkeys
+
+%files
+%license packaging/THIRD-PARTY-LINUX.txt
+%dir %{_docdir}/%{name}
+%{_docdir}/%{name}/example.lhk
+%{_docdir}/%{name}/Linux.md
+%{_bindir}/luahotkeys

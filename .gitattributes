@@ -1,0 +1,3 @@
+packaging/*.sh text eol=lf
+packaging/arch/PKGBUILD.in text eol=lf
+packaging/opensuse/*.spec.in text eol=lf

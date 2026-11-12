@@ -1,0 +1,7 @@
+
+type ExampleShortcut = Combo
+local shortcut: ExampleShortcut = "Ctrl+Alt+J"
+
+hotkey(shortcut, function()
+    type_text("Hello from LuaHotkeys on Linux!")
+end)

@@ -2,8 +2,8 @@ use std::collections::{HashSet, VecDeque};
 
 use super::{value, Suggestions};
 use crate::{
-    input::{modifier_flag, MODIFIERS, NAMED_KEYS},
     lua_syntax::{Kind, Token, Tokens},
+    shortcut::{modifier_flag, MODIFIERS, NAMED_KEYS},
 };
 
 const ALPHANUMERIC: &[&str] = &[

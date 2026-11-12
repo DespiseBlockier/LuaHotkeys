@@ -7,109 +7,36 @@ use windows_sys::Win32::{
     },
 };
 
-#[derive(Clone, Copy, Eq, Hash, PartialEq)]
-pub struct Combination {
-    pub modifiers: u32,
-    pub key: u16,
-}
+use crate::shortcut::{Combination, Key};
 
-pub const NAMED_KEYS: &[(&str, &[(&str, u16)])] = &[
-    (
-        "Typing and editing",
-        &[
-            ("Enter", VK_RETURN),
-            ("Esc", VK_ESCAPE),
-            ("Escape", VK_ESCAPE),
-            ("Space", VK_SPACE),
-            ("Tab", VK_TAB),
-            ("Backspace", VK_BACK),
-            ("Delete", VK_DELETE),
-            ("Insert", VK_INSERT),
-            ("CapsLock", VK_CAPITAL),
-        ],
-    ),
-    (
-        "Navigation",
-        &[
-            ("Home", VK_HOME),
-            ("End", VK_END),
-            ("PageUp", VK_PRIOR),
-            ("PageDown", VK_NEXT),
-            ("Up", VK_UP),
-            ("Down", VK_DOWN),
-            ("Left", VK_LEFT),
-            ("Right", VK_RIGHT),
-        ],
-    ),
-    (
-        "System and media",
-        &[
-            ("PrintScreen", VK_SNAPSHOT),
-            ("VolumeUp", VK_VOLUME_UP),
-            ("VolumeDown", VK_VOLUME_DOWN),
-            ("VolumeMute", VK_VOLUME_MUTE),
-            ("MediaPlayPause", VK_MEDIA_PLAY_PAUSE),
-        ],
-    ),
-];
-
-pub const MODIFIERS: &[(&str, &[&str], u32)] = &[
-    ("Ctrl", &["Control"], MOD_CONTROL),
-    ("Alt", &[], MOD_ALT),
-    ("Shift", &[], MOD_SHIFT),
-    ("Win", &["Windows"], MOD_WIN),
-];
-
-pub fn modifier_flag(part: &str) -> Option<u32> {
-    MODIFIERS.iter().find_map(|&(name, aliases, flag)| {
-        (name.eq_ignore_ascii_case(part)
-            || aliases.iter().any(|alias| alias.eq_ignore_ascii_case(part)))
-        .then_some(flag)
-    })
-}
-
-pub fn parse(text: &str) -> Result<Combination, String> {
-    let mut parts = text.split('+').map(str::trim).peekable();
-    let mut modifiers = 0;
-    while let Some(part) = parts.next() {
-        if parts.peek().is_none() {
-            return key_code(part)
-                .map(|key| Combination { modifiers, key })
-                .ok_or_else(|| format!("Unknown key in '{text}'."));
-        }
-        let flag = modifier_flag(part).unwrap_or(0);
-        if flag == 0 || modifiers & flag != 0 {
-            return Err(format!(
-                "Invalid modifier in '{text}'. Use Ctrl, Alt, Shift or Win."
-            ));
-        }
-        modifiers |= flag;
+fn virtual_key(key: Key) -> u16 {
+    match key {
+        Key::Letter(letter) => u16::from(letter.to_ascii_uppercase()),
+        Key::Digit(digit) => u16::from(digit),
+        Key::Function(number) => VK_F1 + number - 1,
+        Key::Numpad(number) => VK_NUMPAD0 + number,
+        Key::Enter => VK_RETURN,
+        Key::Escape => VK_ESCAPE,
+        Key::Space => VK_SPACE,
+        Key::Tab => VK_TAB,
+        Key::Backspace => VK_BACK,
+        Key::Delete => VK_DELETE,
+        Key::Insert => VK_INSERT,
+        Key::CapsLock => VK_CAPITAL,
+        Key::Home => VK_HOME,
+        Key::End => VK_END,
+        Key::PageUp => VK_PRIOR,
+        Key::PageDown => VK_NEXT,
+        Key::Up => VK_UP,
+        Key::Down => VK_DOWN,
+        Key::Left => VK_LEFT,
+        Key::Right => VK_RIGHT,
+        Key::PrintScreen => VK_SNAPSHOT,
+        Key::VolumeUp => VK_VOLUME_UP,
+        Key::VolumeDown => VK_VOLUME_DOWN,
+        Key::VolumeMute => VK_VOLUME_MUTE,
+        Key::MediaPlayPause => VK_MEDIA_PLAY_PAUSE,
     }
-    Err(format!("Unknown key in '{text}'."))
-}
-
-fn key_code(name: &str) -> Option<u16> {
-    let name = name.to_ascii_lowercase();
-    let bytes = name.as_bytes();
-    if bytes.len() == 1 && bytes[0].is_ascii_alphanumeric() {
-        return Some(u16::from(bytes[0].to_ascii_uppercase()));
-    }
-    if let Some(number) = name
-        .strip_prefix("numpad")
-        .and_then(|part| part.parse::<u16>().ok())
-    {
-        return (number <= 9).then(|| VK_NUMPAD0 + number);
-    }
-    if let Some(number) = name
-        .strip_prefix('f')
-        .and_then(|part| part.parse::<u16>().ok())
-    {
-        return (1..=24).contains(&number).then(|| VK_F1 + number - 1);
-    }
-    NAMED_KEYS
-        .iter()
-        .flat_map(|(_, keys)| keys.iter())
-        .find_map(|&(key, code)| key.eq_ignore_ascii_case(&name).then_some(code))
 }
 
 fn modifiers(combo: Combination) -> impl DoubleEndedIterator<Item = u16> {
@@ -131,7 +58,10 @@ fn is_down(key: u16) -> bool {
 }
 
 pub fn wait_for_release(combo: Combination) {
-    while modifiers(combo).chain([combo.key]).any(is_down) {
+    while modifiers(combo)
+        .chain([virtual_key(combo.key)])
+        .any(is_down)
+    {
         thread::sleep(Duration::from_millis(10));
     }
 }
@@ -142,7 +72,7 @@ pub fn register(id: i32, combo: Combination) -> io::Result<()> {
             null_mut(),
             id,
             combo.modifiers | MOD_NOREPEAT,
-            u32::from(combo.key),
+            u32::from(virtual_key(combo.key)),
         )
     } == 0
     {
@@ -213,8 +143,8 @@ pub fn press(combo: Combination) -> io::Result<()> {
     let mut events = Vec::with_capacity(2 + held.len() * 2);
     events.extend(held.iter().map(|&key| keyboard(key, 0, 0)));
     events.extend([
-        keyboard(combo.key, 0, 0),
-        keyboard(combo.key, 0, KEYEVENTF_KEYUP),
+        keyboard(virtual_key(combo.key), 0, 0),
+        keyboard(virtual_key(combo.key), 0, KEYEVENTF_KEYUP),
     ]);
     events.extend(
         held.iter()

@@ -1,21 +1,44 @@
-#![windows_subsystem = "windows"]
+#![cfg_attr(windows, windows_subsystem = "windows")]
 
+#[cfg(windows)]
 mod association;
+#[cfg(windows)]
 mod common;
+#[cfg(windows)]
 mod completion;
+#[cfg(windows)]
 mod docs;
+#[cfg(windows)]
 mod editor;
+#[cfg(windows)]
 mod gui;
+#[cfg(windows)]
 mod highlight;
+#[cfg(windows)]
 mod input;
+#[cfg(target_os = "linux")]
+mod linux;
+#[cfg(windows)]
 mod lua_syntax;
+mod runtime;
 mod script_types;
+mod shortcut;
+#[cfg(windows)]
 mod suggestions;
+#[cfg(windows)]
 mod theme;
+#[cfg(windows)]
 mod worker;
 
+#[cfg(windows)]
 use std::{ffi::OsStr, path::PathBuf, ptr::null_mut};
 
+#[cfg(target_os = "linux")]
+fn main() -> std::process::ExitCode {
+    linux::main()
+}
+
+#[cfg(windows)]
 fn main() {
     let args: Vec<_> = std::env::args_os().skip(1).collect();
     if args.len() == 1 && args[0] == "--worker" {
