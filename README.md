@@ -36,7 +36,9 @@ The editor also opens ordinary `.lua` files. Use **Restart** to apply changes to
 
 ## Editor tools
 
-Click **Docs** for an offline LuaHotkeys reference and a sample macro. The editor suggests Lua keywords and functions as you type. Use **Ctrl+Space** to open suggestions on demand, the arrow keys to select, and **Tab** or **Enter** to insert. **Escape** closes the list.
+Click **Docs** to browse the offline LuaHotkeys reference by category. Each function has a syntax-colored signature, a description, and a copyable example. The editor and the reference use the same colors for Lua keywords, built-in libraries and their members, and LuaHotkeys functions.
+
+The editor suggests Lua keywords and functions as you type. Use **Ctrl+Space** to open suggestions on demand, the arrow keys to select, and **Tab** or **Enter** to insert. **Escape** closes the list.
 
 Function completions add parentheses and place the caret inside. For example, completing `hotkey` inserts `hotkey()`. Completion also recognizes Lua library members such as `math.sqrt` and suggests block templates in code.
 

@@ -6,6 +6,7 @@ mod completion;
 mod docs;
 mod editor;
 mod gui;
+mod highlight;
 mod input;
 mod lua_syntax;
 mod suggestions;

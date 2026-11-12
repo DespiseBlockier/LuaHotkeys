@@ -675,12 +675,13 @@ fn child(
     extra: u32,
     id: u16,
 ) -> io::Result<HWND> {
+    // The editor and Activity can overlap the suggestion list. Clip their painting to its z-order.
     let window = unsafe {
         CreateWindowExW(
             extra,
             wide(class).as_ptr(),
             wide(caption).as_ptr(),
-            WS_CHILD | WS_VISIBLE | style,
+            WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | style,
             0,
             0,
             0,
@@ -1039,6 +1040,13 @@ pub fn run(file: Option<PathBuf>, start_hidden: bool) -> io::Result<()> {
             }
             0 => return Ok(()),
             _ => {
+                let docs = app.borrow().docs;
+                if msg.message == WM_KEYDOWN
+                    && msg.wParam == usize::from(VK_TAB)
+                    && crate::docs::handle_tab(docs, window, &msg)
+                {
+                    continue;
+                }
                 if matches!(msg.message, WM_LBUTTONDOWN | WM_RBUTTONDOWN | WM_MOUSEWHEEL) {
                     let mut state = app.borrow_mut();
                     if state.popup.is_window(msg.hwnd) {
@@ -1108,7 +1116,10 @@ impl Drop for Ole {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use windows_sys::Win32::Graphics::Gdi::{GetBkColor, GetDC, GetTextColor, ReleaseDC};
+    use windows_sys::Win32::{
+        Foundation::POINT,
+        Graphics::Gdi::{GetBkColor, GetDC, GetTextColor, MapWindowPoints, PtVisible, ReleaseDC},
+    };
 
     #[test]
     fn editor_toolbar_theme_and_completion_work_together() {
@@ -1184,8 +1195,31 @@ mod tests {
             }
         }
         assert_eq!(editor::text(editor), "hotkey");
+        assert!(state.borrow().popup.is_open());
+        unsafe {
+            SendMessageW(owner, WM_TIMER, COLOR_TIMER, 0);
+            let popup = GetDlgItem(owner, i32::from(crate::suggestions::ID));
+            let mut bounds = RECT::default();
+            assert_ne!(GetWindowRect(popup, &mut bounds), 0);
+            let mut point = POINT {
+                x: bounds.left + 8,
+                y: bounds.top + 8,
+            };
+            MapWindowPoints(null_mut(), editor, &mut point, 1);
+            let mut client = RECT::default();
+            GetClientRect(editor, &mut client);
+            assert!((client.left..client.right).contains(&point.x));
+            assert!((client.top..client.bottom).contains(&point.y));
+            for (show, expected) in [(SW_HIDE, 1), (SW_SHOWNA, 0)] {
+                ShowWindow(popup, show);
+                let dc = GetDC(editor);
+                assert!(!dc.is_null());
+                let visible = PtVisible(dc, point.x, point.y);
+                ReleaseDC(editor, dc);
+                assert_eq!(visible, expected, "the popup must cover the editor");
+            }
+        }
         let mut app = state.borrow_mut();
-        assert!(app.popup.is_open());
         assert!(app.completion_key(VK_TAB, false, false));
         assert_eq!(editor::text(editor), "hotkey()");
         assert_eq!(editor::selection(editor), (7, 7));
@@ -1201,7 +1235,6 @@ mod tests {
         unsafe { SendMessageW(owner, WM_COMMAND, DOCS as usize, 0) };
         let docs = state.borrow().docs;
         assert!(!docs.is_null());
-        let reference = unsafe { GetWindow(docs, GW_CHILD) };
-        assert!(editor::text(reference).contains("hotkey(combo, callback)"));
+        crate::docs::verify_reference(docs);
     }
 }

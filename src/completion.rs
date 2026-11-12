@@ -270,10 +270,34 @@ fn members(namespace: &str) -> &'static [Item] {
     }
 }
 
-pub fn is_global_call(name: &str) -> bool {
-    API.iter()
-        .chain(GLOBALS)
-        .any(|item| item.name == name && item.style == Style::Call)
+#[derive(Clone, Copy, Eq, PartialEq)]
+pub enum Builtin {
+    Function,
+    Library,
+    Value,
+}
+
+fn global(name: &str) -> Option<&'static Item> {
+    API.iter().chain(GLOBALS).find(|item| item.name == name)
+}
+
+pub fn signature(name: &str) -> Option<&'static str> {
+    global(name)
+        .filter(|item| item.style == Style::Call)
+        .map(|item| item.detail)
+}
+
+pub fn builtin(namespace: Option<&str>, name: &str) -> Option<Builtin> {
+    let item = match namespace {
+        None | Some("_G") => global(name),
+        Some(namespace) => members(namespace).iter().find(|item| item.name == name),
+    }?;
+    match item.style {
+        Style::Call => Some(Builtin::Function),
+        Style::Value if name == "_G" || !members(name).is_empty() => Some(Builtin::Library),
+        Style::Value => Some(Builtin::Value),
+        Style::Keyword => None,
+    }
 }
 
 pub struct Suggestions {

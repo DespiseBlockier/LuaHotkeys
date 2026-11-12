@@ -12,12 +12,7 @@ use windows_sys::{
     },
 };
 
-use crate::{
-    common::wide,
-    completion::is_global_call,
-    lua_syntax::{is_keyword, Kind, Tokens},
-    theme,
-};
+use crate::{common::wide, highlight, theme};
 
 const EM_GETOLEINTERFACE: u32 = 0x043c;
 const EM_GETTEXTEX: u32 = 0x045e;
@@ -106,7 +101,7 @@ pub fn default_color(hwnd: HWND) {
     set_color(hwnd, 0, theme::TEXT);
 }
 
-pub fn color_all(hwnd: HWND) {
+fn color_all(hwnd: HWND) {
     set_color(hwnd, 4, theme::TEXT);
 }
 
@@ -183,16 +178,7 @@ pub fn highlight(hwnd: HWND) {
     color_all(hwnd);
     let mut previous_byte = 0;
     let mut previous_unit = 0;
-    for token in Tokens::new(&source) {
-        let text_color = match token.kind {
-            Kind::Comment => color(200, 213, 236),
-            Kind::String => color(151, 224, 180),
-            Kind::Number => color(247, 196, 122),
-            Kind::Word if is_keyword(token.text) => color(186, 166, 255),
-            Kind::Word if is_global_call(token.text) => color(121, 207, 255),
-            _ => continue,
-        };
-        let (start, end) = (token.start, token.end);
+    for (start, end, text_color) in highlight::tokens(&source) {
         let first = previous_unit + source[previous_byte..start].encode_utf16().count();
         let last = first + source[start..end].encode_utf16().count();
         let range = Range {
@@ -293,6 +279,27 @@ impl Drop for UndoSuspended {
 }
 
 #[cfg(test)]
+pub(crate) fn foreground(hwnd: HWND, start: i32, end: i32) -> u32 {
+    let range = Range { start, end };
+    let mut format = CharacterFormat {
+        size: size_of::<CharacterFormat>() as u32,
+        mask: 0,
+        effects: 0,
+        height: 0,
+        offset: 0,
+        text_color: 0,
+        charset: 0,
+        pitch: 0,
+        face: [0; 32],
+    };
+    unsafe {
+        SendMessageW(hwnd, EM_EXSETSEL, 0, &range as *const _ as isize);
+        SendMessageW(hwnd, 0x043a, 1, &mut format as *mut _ as isize); // EM_GETCHARFORMAT
+    }
+    format.text_color
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -348,21 +355,7 @@ mod tests {
                     color(200, 213, 236),
                 ),
             ] {
-                let range = Range { start, end };
-                let mut format = CharacterFormat {
-                    size: size_of::<CharacterFormat>() as u32,
-                    mask: 0,
-                    effects: 0,
-                    height: 0,
-                    offset: 0,
-                    text_color: 0,
-                    charset: 0,
-                    pitch: 0,
-                    face: [0; 32],
-                };
-                SendMessageW(editor, EM_EXSETSEL, 0, &range as *const _ as isize);
-                SendMessageW(editor, 0x043a, 1, &mut format as *mut _ as isize);
-                assert_eq!(format.text_color, expected);
+                assert_eq!(foreground(editor, start, end), expected);
             }
             SendMessageW(editor, 0x00c7, 0, 0);
             assert_eq!(text(editor), source);
