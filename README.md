@@ -11,7 +11,7 @@ A native Windows automation app written in Rust for global hotkeys and macros in
 
 ## Update LuaHotkeys
 
-Open **Update LuaHotkeys** from the Start menu for an installed copy. For the portable build, run **LuaHotkeysUpdater.exe** beside **LuaHotkeys.exe** in the extracted folder.
+Click **Update** in the editor to check for updates. You can also open **Update LuaHotkeys** from the Start menu for an installed copy. For the portable build, run **LuaHotkeysUpdater.exe** beside **LuaHotkeys.exe** in the extracted folder.
 
 The updater checks the latest stable GitHub release, verifies the package hash, and applies it to that copy. The installed build reuses your original install folder. The portable build replaces its program files and keeps your scripts in place. If LuaHotkeys has unsaved edits, save them and close the app when asked.
 
@@ -19,7 +19,7 @@ For a copy from before 0.3.1, run the newer MSI or extract the newer portable ZI
 
 ## Run or edit a script
 
-New scripts use the `.lhk` extension. Existing `.luahotkeys` scripts work the same way. The MSI registers both extensions during setup. For the portable build, click **Associate files** in LuaHotkeys once.
+New scripts use the `.lhk` extension. Existing `.luahotkeys` scripts work the same way. The MSI registers both extensions during setup. For the portable build, choose **Associate files** from the LuaHotkeys tray menu once.
 
 Use **New** in LuaHotkeys or **New → LuaHotkeys Script** in Explorer to make an empty `.lhk` file.
 
@@ -27,12 +27,18 @@ Use **New** in LuaHotkeys or **New → LuaHotkeys Script** in Explorer to make a
 - **Right-click → Edit in LuaHotkeys** to open the editor. On Windows 11, look under **Show more options** if needed.
 - While a script runs in the tray, use **Edit script** to open its editor or **Exit** to stop it and close LuaHotkeys.
 
-The editor also opens ordinary `.lua` files. Use **Restart** to apply changes to a running script. If you move the portable build, click **Associate files** from its new location.
+The editor also opens ordinary `.lua` files. Use **Restart** to apply changes to a running script. If you move the portable build, use **Associate files** from its tray menu again.
 
 ```powershell
 .\LuaHotkeys.exe --run ".\my shortcuts.lhk"
 .\LuaHotkeys.exe --edit ".\my shortcuts.lhk"
 ```
+
+## Editor tools
+
+Click **Docs** for an offline LuaHotkeys reference and a sample macro. The editor suggests Lua keywords and functions as you type. Use **Ctrl+Space** to open suggestions on demand, the arrow keys to select, and **Tab** or **Enter** to insert. **Escape** closes the list.
+
+Function completions add parentheses and place the caret inside. For example, completing `hotkey` inserts `hotkey()`. Completion also recognizes Lua library members such as `math.sqrt` and suggests block templates in code.
 
 ## Lua functions
 

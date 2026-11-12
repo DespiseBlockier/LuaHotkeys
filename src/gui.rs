@@ -15,9 +15,7 @@ use std::{
 use base64::{engine::general_purpose::STANDARD, Engine};
 use windows_sys::Win32::{
     Foundation::{HWND, LPARAM, LRESULT, RECT, SYSTEMTIME, WPARAM},
-    Graphics::Gdi::{
-        CreateFontW, DeleteObject, GetStockObject, GetSysColorBrush, COLOR_WINDOW, DEFAULT_GUI_FONT,
-    },
+    Graphics::Gdi::{CreateFontW, DeleteObject, GetStockObject, DEFAULT_GUI_FONT, HDC},
     System::{
         LibraryLoader::{GetModuleHandleW, LoadLibraryW},
         Ole::{OleInitialize, OleUninitialize},
@@ -29,8 +27,11 @@ use windows_sys::Win32::{
             GetOpenFileNameW, GetSaveFileNameW, OFN_FILEMUSTEXIST, OFN_NOCHANGEDIR,
             OFN_OVERWRITEPROMPT, OFN_PATHMUSTEXIST, OPENFILENAMEW,
         },
+        Controls::{DRAWITEMSTRUCT, ODT_BUTTON},
         Input::KeyboardAndMouse::{
-            EnableWindow, GetKeyState, SetFocus, VK_CONTROL, VK_F5, VK_SHIFT,
+            EnableWindow, GetKeyState, SetFocus, VK_CONTROL, VK_DOWN, VK_END, VK_ESCAPE, VK_F5,
+            VK_HOME, VK_LEFT, VK_NEXT, VK_PRIOR, VK_RETURN, VK_RIGHT, VK_SHIFT, VK_SPACE, VK_TAB,
+            VK_UP,
         },
         Shell::{
             Shell_NotifyIconW, NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NIM_MODIFY,
@@ -43,7 +44,9 @@ use windows_sys::Win32::{
 use crate::{
     association,
     common::{app_folder, close_event, wide, Handle},
-    editor,
+    docs, editor,
+    suggestions::Popup,
+    theme,
 };
 
 const RUN: u16 = 101;
@@ -56,9 +59,16 @@ const ASSOCIATE: u16 = 107;
 const EDITOR: u16 = 108;
 const SHOW_EDITOR: u16 = 109;
 const EXIT: u16 = 110;
+const DOCS: u16 = 111;
+const UPDATE: u16 = 112;
+const TITLE_LABEL: u16 = 121;
+const FILE_LABEL: u16 = 122;
+const ACTIVITY_LABEL: u16 = 123;
+const STATUS_LABEL: u16 = 124;
 const TRAY_MESSAGE: u32 = WM_APP + 1;
 const WORKER_MESSAGE: u32 = WM_APP + 2;
 const UPDATE_CLOSE: u32 = WM_APP + 3;
+const SUGGEST: u32 = WM_APP + 4;
 const COLOR_TIMER: usize = 1;
 const EM_REPLACESEL: u32 = 0x00c2;
 const EM_SETSEL: u32 = 0x00b1;
@@ -85,6 +95,8 @@ struct App {
     activity: HWND,
     status: HWND,
     fonts: Vec<*mut std::ffi::c_void>,
+    docs: HWND,
+    popup: Popup,
     path: Option<PathBuf>,
     saved: String,
     worker: Option<Child>,
@@ -108,6 +120,8 @@ impl App {
             activity: null_mut(),
             status: null_mut(),
             fonts: Vec::new(),
+            docs: null_mut(),
+            popup: Popup::new(),
             path: None,
             saved: String::new(),
             worker: None,
@@ -120,7 +134,7 @@ impl App {
     }
 
     fn initialize(&mut self) -> io::Result<()> {
-        self.title = child(self.window, "STATIC", "LuaHotkeys", 0, 0, 0)?;
+        self.title = child(self.window, "STATIC", "LuaHotkeys", 0, 0, TITLE_LABEL)?;
         for (id, caption) in [
             (RUN, "Run"),
             (STOP, "Stop"),
@@ -128,18 +142,26 @@ impl App {
             (OPEN, "Open…"),
             (SAVE, "Save"),
             (HIDE, "Hide to tray"),
-            (ASSOCIATE, "Associate files"),
+            (DOCS, "Docs"),
+            (UPDATE, "Update"),
         ] {
             self.buttons.push(child(
                 self.window,
                 "BUTTON",
                 caption,
-                WS_TABSTOP | BS_PUSHBUTTON as u32,
+                WS_TABSTOP | BS_OWNERDRAW as u32,
                 0,
                 id,
             )?);
         }
-        self.file_label = child(self.window, "STATIC", "", SS_PATHELLIPSIS_STYLE, 0, 0)?;
+        self.file_label = child(
+            self.window,
+            "STATIC",
+            "",
+            SS_PATHELLIPSIS_STYLE,
+            0,
+            FILE_LABEL,
+        )?;
         self.editor = child(
             self.window,
             "RICHEDIT50W",
@@ -151,19 +173,19 @@ impl App {
                 | ES_AUTOVSCROLL as u32
                 | ES_AUTOHSCROLL as u32
                 | ES_WANTRETURN as u32,
-            WS_EX_CLIENTEDGE,
+            0,
             EDITOR,
         )?;
-        self.activity_label = child(self.window, "STATIC", "Activity", 0, 0, 0)?;
+        self.activity_label = child(self.window, "STATIC", "Activity", 0, 0, ACTIVITY_LABEL)?;
         self.activity = child(
             self.window,
             "RICHEDIT50W",
             "",
             WS_VSCROLL | ES_MULTILINE as u32 | ES_AUTOVSCROLL as u32 | ES_READONLY as u32,
-            WS_EX_CLIENTEDGE,
+            0,
             0,
         )?;
-        self.status = child(self.window, "STATIC", "", 0, 0, 0)?;
+        self.status = child(self.window, "STATIC", "", 0, 0, STATUS_LABEL)?;
 
         let title_font = font("Segoe UI", -30, 700);
         let editor_font = font("Consolas", -16, 400);
@@ -183,12 +205,24 @@ impl App {
                 self.editor,
                 editor::EM_SETBKGNDCOLOR,
                 0,
-                editor::color(20, 30, 48) as isize,
+                theme::EDITOR as isize,
+            );
+            SendMessageW(
+                self.activity,
+                editor::EM_SETBKGNDCOLOR,
+                0,
+                theme::ACTIVITY as isize,
             );
             SendMessageW(self.editor, editor::EM_SETEVENTMASK, 0, 1);
+            for control in [self.editor, self.activity] {
+                SendMessageW(control, 0x00d3, 3, 10 | (10 << 16)); // EM_SETMARGINS
+            }
             SendMessageW(self.editor, EM_EXLIMITTEXT, 0, i32::MAX as isize);
         }
         editor::default_color(self.editor);
+        editor::default_color(self.activity);
+        theme::scrollbars(self.editor);
+        theme::scrollbars(self.activity);
         self.taskbar_created = unsafe { RegisterWindowMessageW(wide("TaskbarCreated").as_ptr()) };
         self.set_script(include_str!("../example.lua"), None);
         self.append("Run the example, then press Ctrl+Alt+J in a text editor.");
@@ -208,7 +242,7 @@ impl App {
         let height = client.bottom;
         let mut x = 18;
         place(self.title, x, 13, width, 37);
-        for (&button, button_width) in self.buttons.iter().zip([82, 74, 72, 78, 74, 110, 124]) {
+        for (&button, button_width) in self.buttons.iter().zip([82, 72, 65, 73, 67, 104, 70, 82]) {
             place(button, x, 61, button_width, 32);
             x += button_width + 8;
         }
@@ -223,6 +257,7 @@ impl App {
     }
 
     fn set_script(&mut self, source: &str, path: Option<PathBuf>) {
+        self.popup.dismiss();
         self.path = path;
         set_text(self.editor, source);
         self.saved = editor::text(self.editor);
@@ -294,6 +329,7 @@ impl App {
     }
 
     fn command(&mut self, id: u16) {
+        self.popup.dismiss();
         match id {
             RUN => {
                 if let Err(error) = self.start_worker() {
@@ -326,6 +362,21 @@ impl App {
             HIDE => {
                 unsafe { ShowWindow(self.window, SW_HIDE) };
             }
+            DOCS => match docs::open(self.window, self.docs) {
+                Ok(window) => self.docs = window,
+                Err(error) => self.error("Could not open Docs", &error),
+            },
+            UPDATE => {
+                let launch = app_folder().and_then(|folder| {
+                    Command::new(folder.join("LuaHotkeysUpdater.exe"))
+                        .current_dir(&folder)
+                        .creation_flags(CREATE_NO_WINDOW)
+                        .spawn()
+                });
+                if let Err(error) = launch {
+                    self.error("Could not start updater", &error);
+                }
+            }
             ASSOCIATE => {
                 match std::env::current_exe().and_then(|executable| association::register(&executable)) {
                     Ok(()) => self.append("Double-click a script to run it. Right-click for Edit in LuaHotkeys or New → LuaHotkeys Script."),
@@ -338,6 +389,41 @@ impl App {
             }
             _ => {}
         }
+    }
+
+    fn completion_key(&mut self, key: u16, ctrl: bool, shift: bool) -> bool {
+        if key == VK_SPACE && ctrl && !shift {
+            let _ = self.popup.show(self.window, self.editor, true);
+            return true;
+        }
+        if !self.popup.is_open() {
+            return false;
+        }
+        match (key, ctrl, shift) {
+            (VK_UP, false, false) => self.popup.move_selection(-1),
+            (VK_DOWN, false, false) => self.popup.move_selection(1),
+            (VK_RETURN | VK_TAB, false, false) => {
+                if !self.popup.accept(self.editor) {
+                    return false;
+                }
+                self.after_completion();
+            }
+            (VK_ESCAPE, _, _) => self.popup.dismiss(),
+            (
+                VK_UP | VK_DOWN | VK_LEFT | VK_RIGHT | VK_HOME | VK_END | VK_PRIOR | VK_NEXT,
+                _,
+                _,
+            ) => {
+                self.popup.dismiss();
+                return false;
+            }
+            _ => return false,
+        }
+        true
+    }
+
+    fn after_completion(&self) {
+        unsafe { SetTimer(self.window, COLOR_TIMER, 110, None) };
     }
 
     fn start_worker(&mut self) -> io::Result<()> {
@@ -539,6 +625,12 @@ impl App {
                 MF_STRING | if self.worker.is_some() { 0 } else { MF_GRAYED },
                 STOP as usize,
                 wide("Stop script").as_ptr(),
+            );
+            AppendMenuW(
+                menu,
+                MF_STRING,
+                ASSOCIATE as usize,
+                wide("Associate files").as_ptr(),
             );
             AppendMenuW(menu, MF_SEPARATOR, 0, null());
             AppendMenuW(menu, MF_STRING, EXIT as usize, wide("Exit").as_ptr());
@@ -743,6 +835,34 @@ unsafe extern "system" fn window_proc(hwnd: HWND, id: u32, w: WPARAM, l: LPARAM)
         limits.ptMinTrackSize.y = 475;
         return 0;
     }
+    match id {
+        WM_ERASEBKGND => {
+            theme::paint_background(hwnd, w as HDC);
+            return 1;
+        }
+        WM_CTLCOLORSTATIC => match unsafe { GetDlgCtrlID(l as HWND) } as u16 {
+            FILE_LABEL | STATUS_LABEL => {
+                return theme::color_control(w as HDC, theme::MUTED, theme::BACKGROUND)
+            }
+            TITLE_LABEL | ACTIVITY_LABEL => {
+                return theme::color_control(w as HDC, theme::TEXT, theme::BACKGROUND)
+            }
+            _ => {}
+        },
+        WM_CTLCOLORLISTBOX
+            if unsafe { GetDlgCtrlID(l as HWND) } as u16 == crate::suggestions::ID =>
+        {
+            return theme::color_control(w as HDC, theme::TEXT, theme::ACTIVITY);
+        }
+        WM_DRAWITEM => {
+            let item = unsafe { &*(l as *const DRAWITEMSTRUCT) };
+            if item.CtlType == ODT_BUTTON {
+                theme::button(item, item.CtlID == u32::from(RUN));
+                return 1;
+            }
+        }
+        _ => {}
+    }
     let state = unsafe { GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *const RefCell<App> };
     if !state.is_null() {
         if let Ok(mut app) = unsafe { &*state }.try_borrow_mut() {
@@ -755,16 +875,37 @@ unsafe extern "system" fn window_proc(hwnd: HWND, id: u32, w: WPARAM, l: LPARAM)
                     app.window = hwnd;
                     return if app.initialize().is_ok() { 0 } else { -1 };
                 }
+                WM_DRAWITEM => {
+                    let item = unsafe { &*(l as *const DRAWITEMSTRUCT) };
+                    if item.CtlID == u32::from(crate::suggestions::ID) {
+                        app.popup.paint(item);
+                        return 1;
+                    }
+                }
                 WM_SIZE => {
+                    app.popup.dismiss();
                     app.layout();
                     return 0;
                 }
                 WM_COMMAND => {
-                    if (w as u16) == EDITOR && (w >> 16) as u16 == 0x0300 {
-                        unsafe { SetTimer(hwnd, COLOR_TIMER, 110, None) };
+                    if w as u16 == EDITOR {
+                        match (w >> 16) as u16 {
+                            0x0300 => unsafe {
+                                // EN_CHANGE
+                                SetTimer(hwnd, COLOR_TIMER, 110, None);
+                                PostMessageW(hwnd, SUGGEST, 0, 0);
+                            },
+                            0x0200 => app.popup.dismiss(), // EN_KILLFOCUS
+                            _ => {}
+                        }
                     } else {
                         app.command(w as u16);
                     }
+                    return 0;
+                }
+                SUGGEST => {
+                    let editor = app.editor;
+                    let _ = app.popup.show(hwnd, editor, false);
                     return 0;
                 }
                 WM_TIMER if w == COLOR_TIMER => {
@@ -836,7 +977,7 @@ pub fn run(file: Option<PathBuf>, start_hidden: bool) -> io::Result<()> {
         lpszClassName: class_name.as_ptr(),
         hCursor: unsafe { LoadCursorW(null_mut(), IDC_ARROW) },
         hIcon: crate::common::app_icon(false),
-        hbrBackground: unsafe { GetSysColorBrush(COLOR_WINDOW) },
+
         ..Default::default()
     };
     if unsafe { RegisterClassW(&class) } == 0 {
@@ -848,7 +989,7 @@ pub fn run(file: Option<PathBuf>, start_hidden: bool) -> io::Result<()> {
             0,
             class_name.as_ptr(),
             wide("LuaHotkeys").as_ptr(),
-            WS_OVERLAPPEDWINDOW,
+            WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN,
             (GetSystemMetrics(SM_CXSCREEN) - 880).max(0) / 2,
             (GetSystemMetrics(SM_CYSCREEN) - 640).max(0) / 2,
             880,
@@ -870,6 +1011,7 @@ pub fn run(file: Option<PathBuf>, start_hidden: bool) -> io::Result<()> {
             crate::common::app_icon(true) as isize,
         )
     };
+    theme::title_bar(window);
     let initial = (|| {
         let mut app = app.borrow_mut();
         if let Some(file) = file {
@@ -897,9 +1039,33 @@ pub fn run(file: Option<PathBuf>, start_hidden: bool) -> io::Result<()> {
             }
             0 => return Ok(()),
             _ => {
-                if msg.message == WM_KEYDOWN {
+                if matches!(msg.message, WM_LBUTTONDOWN | WM_RBUTTONDOWN | WM_MOUSEWHEEL) {
+                    let mut state = app.borrow_mut();
+                    if state.popup.is_window(msg.hwnd) {
+                        if msg.message == WM_LBUTTONDOWN {
+                            let editor = state.editor;
+                            if state.popup.click(editor, msg.lParam) {
+                                state.after_completion();
+                            }
+                            continue;
+                        }
+                    } else {
+                        state.popup.dismiss();
+                    }
+                }
+                if msg.message == WM_KEYDOWN
+                    && (msg.hwnd == window || unsafe { IsChild(window, msg.hwnd) } != 0)
+                {
                     let ctrl = unsafe { GetKeyState(i32::from(VK_CONTROL)) } < 0;
                     let shift = unsafe { GetKeyState(i32::from(VK_SHIFT)) } < 0;
+                    {
+                        let mut state = app.borrow_mut();
+                        if msg.hwnd == state.editor
+                            && state.completion_key(msg.wParam as u16, ctrl, shift)
+                        {
+                            continue;
+                        }
+                    }
                     let action = match (msg.wParam as u16, ctrl, shift) {
                         (VK_F5, false, false) => RUN,
                         (VK_F5, false, true) => STOP,
@@ -936,5 +1102,106 @@ impl Ole {
 impl Drop for Ole {
     fn drop(&mut self) {
         unsafe { OleUninitialize() };
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use windows_sys::Win32::Graphics::Gdi::{GetBkColor, GetDC, GetTextColor, ReleaseDC};
+
+    #[test]
+    fn editor_toolbar_theme_and_completion_work_together() {
+        let _ole = Ole::start().unwrap();
+        let state = Box::new(RefCell::new(App::new(false)));
+        let name = wide("LuaHotkeysEditorTest");
+        let owner = unsafe {
+            assert!(!LoadLibraryW(wide("msftedit.dll").as_ptr()).is_null());
+            let instance = GetModuleHandleW(null());
+            let class = WNDCLASSW {
+                lpfnWndProc: Some(window_proc),
+                hInstance: instance,
+                lpszClassName: name.as_ptr(),
+                ..Default::default()
+            };
+            assert_ne!(RegisterClassW(&class), 0);
+            CreateWindowExW(
+                0,
+                name.as_ptr(),
+                wide("Editor test").as_ptr(),
+                WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN,
+                0,
+                0,
+                880,
+                640,
+                null_mut(),
+                null_mut(),
+                instance,
+                (&*state as *const RefCell<App>).cast(),
+            )
+        };
+        assert!(!owner.is_null());
+        struct TestWindow(HWND);
+        impl Drop for TestWindow {
+            fn drop(&mut self) {
+                unsafe { DestroyWindow(self.0) };
+            }
+        }
+        let _window = TestWindow(owner);
+
+        unsafe {
+            assert!(!GetDlgItem(owner, i32::from(DOCS)).is_null());
+            assert!(!GetDlgItem(owner, i32::from(UPDATE)).is_null());
+            assert!(GetDlgItem(owner, i32::from(ASSOCIATE)).is_null());
+            ShowWindow(owner, SW_SHOW);
+        }
+        let editor = state.borrow().editor;
+        unsafe {
+            SetFocus(editor);
+            let dc = GetDC(owner);
+            assert_ne!(
+                SendMessageW(
+                    owner,
+                    WM_CTLCOLORSTATIC,
+                    dc as usize,
+                    state.borrow().title as isize
+                ),
+                0
+            );
+            assert_eq!(GetTextColor(dc), theme::TEXT);
+            assert_eq!(GetBkColor(dc), theme::BACKGROUND);
+            ReleaseDC(owner, dc);
+        }
+
+        set_text(editor, "");
+        unsafe {
+            for character in "hotkey".encode_utf16() {
+                SendMessageW(editor, WM_CHAR, character as usize, 1);
+            }
+            let mut message = MSG::default();
+            while PeekMessageW(&mut message, owner, SUGGEST, SUGGEST, PM_REMOVE) != 0 {
+                DispatchMessageW(&message);
+            }
+        }
+        assert_eq!(editor::text(editor), "hotkey");
+        let mut app = state.borrow_mut();
+        assert!(app.popup.is_open());
+        assert!(app.completion_key(VK_TAB, false, false));
+        assert_eq!(editor::text(editor), "hotkey()");
+        assert_eq!(editor::selection(editor), (7, 7));
+        unsafe { SendMessageW(editor, 0x00c7, 0, 0) }; // EM_UNDO
+        assert_eq!(editor::text(editor), "hotkey");
+        editor::replace(editor, 6..6, "", 6);
+        assert!(app.completion_key(VK_SPACE, true, false));
+        assert!(app.popup.is_open());
+        assert!(app.completion_key(VK_ESCAPE, false, false));
+        assert!(!app.popup.is_open());
+        drop(app);
+
+        unsafe { SendMessageW(owner, WM_COMMAND, DOCS as usize, 0) };
+        let docs = state.borrow().docs;
+        assert!(!docs.is_null());
+        let reference = unsafe { GetWindow(docs, GW_CHILD) };
+        assert!(editor::text(reference).contains("hotkey(combo, callback)"));
     }
 }

@@ -2,9 +2,14 @@
 
 mod association;
 mod common;
+mod completion;
+mod docs;
 mod editor;
 mod gui;
 mod input;
+mod lua_syntax;
+mod suggestions;
+mod theme;
 mod worker;
 
 use std::{ffi::OsStr, path::PathBuf, ptr::null_mut};

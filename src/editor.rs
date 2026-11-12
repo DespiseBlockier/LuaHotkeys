@@ -12,6 +12,13 @@ use windows_sys::{
     },
 };
 
+use crate::{
+    common::wide,
+    completion::is_global_call,
+    lua_syntax::{is_keyword, Kind, Tokens},
+    theme,
+};
+
 const EM_GETOLEINTERFACE: u32 = 0x043c;
 const EM_GETTEXTEX: u32 = 0x045e;
 const EM_GETTEXTLENGTHEX: u32 = 0x045f;
@@ -96,7 +103,65 @@ fn read_text(hwnd: HWND) -> String {
 }
 
 pub fn default_color(hwnd: HWND) {
-    set_color(hwnd, 0, color(234, 240, 252));
+    set_color(hwnd, 0, theme::TEXT);
+}
+
+pub fn color_all(hwnd: HWND) {
+    set_color(hwnd, 4, theme::TEXT);
+}
+
+pub fn selection(hwnd: HWND) -> (usize, usize) {
+    let mut range = Range::default();
+    unsafe { SendMessageW(hwnd, EM_EXGETSEL, 0, &mut range as *mut _ as isize) };
+    (range.start.max(0) as usize, range.end.max(0) as usize)
+}
+
+pub fn utf16_to_byte(text: &str, position: usize) -> Option<usize> {
+    let mut units = 0;
+    for (index, character) in text.char_indices() {
+        if units == position {
+            return Some(index);
+        }
+        units += character.len_utf16();
+        if units > position {
+            return None;
+        }
+    }
+    (units == position).then_some(text.len())
+}
+
+pub fn position(hwnd: HWND, caret: usize) -> POINT {
+    let mut point = POINT {
+        x: i32::MIN,
+        y: i32::MIN,
+    };
+    unsafe {
+        SendMessageW(hwnd, 0x0426, &mut point as *mut _ as usize, caret as isize); // EM_POSFROMCHAR
+        if point.x == i32::MIN {
+            SendMessageW(hwnd, 0x00d6, &mut point as *mut _ as usize, caret as isize);
+        }
+    }
+    point
+}
+
+pub fn replace(hwnd: HWND, range: std::ops::Range<usize>, value: &str, caret: usize) {
+    let range = Range {
+        start: range.start as i32,
+        end: range.end as i32,
+    };
+    let cursor = Range {
+        start: caret as i32,
+        end: caret as i32,
+    };
+    let replacement = wide(value.replace('\n', "\r"));
+    unsafe {
+        SendMessageW(hwnd, 0x0458, 0, 0); // EM_STOPGROUPTYPING
+        SendMessageW(hwnd, EM_EXSETSEL, 0, &range as *const _ as isize);
+        SendMessageW(hwnd, 0x00c2, 1, replacement.as_ptr() as isize); // EM_REPLACESEL
+        SendMessageW(hwnd, EM_EXSETSEL, 0, &cursor as *const _ as isize);
+        SendMessageW(hwnd, 0x0458, 0, 0);
+        SendMessageW(hwnd, 0x00b7, 0, 0); // EM_SCROLLCARET
+    }
 }
 
 pub fn highlight(hwnd: HWND) {
@@ -115,10 +180,19 @@ pub fn highlight(hwnd: HWND) {
         }
     }
 
-    set_color(hwnd, 4, color(234, 240, 252));
+    color_all(hwnd);
     let mut previous_byte = 0;
     let mut previous_unit = 0;
-    for (start, end, text_color) in Tokens::new(&source) {
+    for token in Tokens::new(&source) {
+        let text_color = match token.kind {
+            Kind::Comment => color(200, 213, 236),
+            Kind::String => color(151, 224, 180),
+            Kind::Number => color(247, 196, 122),
+            Kind::Word if is_keyword(token.text) => color(186, 166, 255),
+            Kind::Word if is_global_call(token.text) => color(121, 207, 255),
+            _ => continue,
+        };
+        let (start, end) = (token.start, token.end);
         let first = previous_unit + source[previous_byte..start].encode_utf16().count();
         let last = first + source[start..end].encode_utf16().count();
         let range = Range {
@@ -218,162 +292,10 @@ impl Drop for UndoSuspended {
     }
 }
 
-struct Tokens<'a> {
-    text: &'a str,
-    position: usize,
-}
-
-impl<'a> Tokens<'a> {
-    fn new(text: &'a str) -> Self {
-        Self { text, position: 0 }
-    }
-
-    fn long_bracket(&self, start: usize) -> Option<usize> {
-        let bytes = self.text.as_bytes();
-        if bytes.get(start) != Some(&b'[') {
-            return None;
-        }
-        let mut open = start + 1;
-        while bytes.get(open) == Some(&b'=') {
-            open += 1;
-        }
-        if bytes.get(open) != Some(&b'[') {
-            return None;
-        }
-        let close = format!("]{}]", "=".repeat(open - start - 1));
-        Some(
-            self.text[open + 1..]
-                .find(&close)
-                .map_or(bytes.len(), |index| open + 1 + index + close.len()),
-        )
-    }
-
-    fn digit_run(&mut self, predicate: fn(&u8) -> bool) {
-        while self
-            .text
-            .as_bytes()
-            .get(self.position)
-            .is_some_and(predicate)
-        {
-            self.position += 1;
-        }
-    }
-}
-
-impl Iterator for Tokens<'_> {
-    type Item = (usize, usize, u32);
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let bytes = self.text.as_bytes();
-        while let Some(&byte) = bytes.get(self.position) {
-            let start = self.position;
-            self.position += 1;
-            let next = bytes.get(self.position).copied();
-            let text_color = match byte {
-                b'-' if next == Some(b'-') => {
-                    self.position += 1;
-                    if let Some(end) = self.long_bracket(self.position) {
-                        self.position = end;
-                    } else {
-                        while bytes
-                            .get(self.position)
-                            .is_some_and(|byte| !matches!(byte, b'\r' | b'\n'))
-                        {
-                            self.position += 1;
-                        }
-                    }
-                    color(200, 213, 236)
-                }
-                b'[' => {
-                    let Some(end) = self.long_bracket(start) else {
-                        continue;
-                    };
-                    self.position = end;
-                    color(151, 224, 180)
-                }
-                b'\'' | b'"' => {
-                    while let Some(&current) = bytes.get(self.position) {
-                        if matches!(current, b'\r' | b'\n') {
-                            break;
-                        }
-                        self.position += 1;
-                        if current == byte {
-                            break;
-                        }
-                        if current == b'\\' && self.position < bytes.len() {
-                            self.position += 1;
-                            if bytes[self.position - 1] == b'\r'
-                                && bytes.get(self.position) == Some(&b'\n')
-                            {
-                                self.position += 1;
-                            }
-                        }
-                    }
-                    color(151, 224, 180)
-                }
-                b'a'..=b'z' | b'A'..=b'Z' | b'_' => {
-                    self.digit_run(|byte| byte.is_ascii_alphanumeric() || *byte == b'_');
-                    match &self.text[start..self.position] {
-                        "and" | "break" | "do" | "else" | "elseif" | "end" | "false" | "for"
-                        | "function" | "if" | "in" | "local" | "nil" | "not" | "or" | "repeat"
-                        | "return" | "then" | "true" | "until" | "while" => color(186, 166, 255),
-                        "hotkey" | "type_text" | "press" | "click" | "move_mouse" | "mouse_pos"
-                        | "sleep" | "run" | "log" | "print" | "assert" | "error" | "ipairs"
-                        | "pairs" | "pcall" | "require" | "tonumber" | "tostring" | "type"
-                        | "xpcall" => color(121, 207, 255),
-                        _ => continue,
-                    }
-                }
-                b'.' if next == Some(b'.') => {
-                    self.digit_run(|byte| *byte == b'.');
-                    continue;
-                }
-                b'0' if matches!(next, Some(b'x' | b'X'))
-                    && bytes
-                        .get(self.position + 1)
-                        .is_some_and(u8::is_ascii_hexdigit) =>
-                {
-                    self.position += 1;
-                    self.digit_run(u8::is_ascii_hexdigit);
-                    color(247, 196, 122)
-                }
-                byte if byte.is_ascii_digit()
-                    || (byte == b'.' && next.is_some_and(|byte| byte.is_ascii_digit())) =>
-                {
-                    self.digit_run(u8::is_ascii_digit);
-                    if byte != b'.'
-                        && bytes.get(self.position) == Some(&b'.')
-                        && bytes.get(self.position + 1) != Some(&b'.')
-                    {
-                        self.position += 1;
-                        self.digit_run(u8::is_ascii_digit);
-                    }
-                    if matches!(bytes.get(self.position), Some(b'e' | b'E')) {
-                        let before = self.position;
-                        self.position += 1;
-                        if matches!(bytes.get(self.position), Some(b'+' | b'-')) {
-                            self.position += 1;
-                        }
-                        let exponent = self.position;
-                        self.digit_run(u8::is_ascii_digit);
-                        if self.position == exponent {
-                            self.position = before;
-                        }
-                    }
-                    color(247, 196, 122)
-                }
-                _ => continue,
-            };
-            return Some((start, self.position, text_color));
-        }
-        None
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::common::wide;
+
     use std::ptr::null;
     use windows_sys::Win32::{
         System::{
