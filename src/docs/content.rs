@@ -1,6 +1,6 @@
 use std::fmt::Write;
 
-use crate::{completion, editor::color, highlight, theme};
+use crate::{completion, highlight, theme};
 
 pub struct Category {
     pub name: &'static str,
@@ -222,7 +222,6 @@ fn signature(name: &str) -> String {
     format!("{name}{}", completion::signature(name).unwrap_or("()"))
 }
 
-pub(super) const CODE_BACKGROUND: u32 = color(29, 40, 58);
 const SYNTAX_FIRST: usize = 4;
 
 struct Document {
@@ -235,7 +234,7 @@ impl Document {
         let mut rtf = String::from(
             r"{\rtf1\ansi\deff0\uc1{\fonttbl{\f0 Segoe UI;}{\f1 Consolas;}}{\colortbl;",
         );
-        for color in [theme::TEXT, theme::MUTED, CODE_BACKGROUND]
+        for color in [theme::TEXT, theme::MUTED, theme::BORDER]
             .into_iter()
             .chain(highlight::COLORS)
         {
@@ -287,11 +286,17 @@ impl Document {
     }
 
     fn code(&mut self, text: &str) {
-        // RichEdit uses the cell's right edge in twips to lay out the shaded panel.
+        // RichEdit paints shaded cells with a single foreground color, overriding syntax colors.
         let edge = (self.width - 180).max(720);
         let _ = write!(
             self.rtf,
-            r"{{\trowd\trleft180\trgaph180\clcbpat3\cellx{edge}\pard\intbl\sb120\sa120\sl320\slmult0\f1\fs21\cf1 "
+            concat!(
+                r"{{\trowd\trleft180\trgaph180",
+                r"\clbrdrt\brdrs\brdrw15\brdrcf3\clbrdrb\brdrs\brdrw15\brdrcf3",
+                r"\clbrdrl\brdrs\brdrw15\brdrcf3\clbrdrr\brdrs\brdrw15\brdrcf3",
+                r"\cellx{edge}\pard\intbl\sb120\sa120\sl320\slmult0\f1\fs21\cf1 "
+            ),
+            edge = edge
         );
         let mut end = 0;
         for (start, next, color) in highlight::tokens(text) {
@@ -350,7 +355,7 @@ mod tests {
                 assert_eq!(Page::from_id(page.id()), Some(page));
                 assert!(reference.contains(function.name));
                 assert!(page.example().is_some());
-                assert!(page.rtf(6000).contains(r"\clcbpat3\cellx5820"));
+                assert!(page.rtf(6000).contains(r"\brdrcf3\cellx5820"));
             }
         }
         let timing = Page::Function(3, 0).rtf(6000);

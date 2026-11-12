@@ -476,6 +476,7 @@ pub(crate) fn verify_reference(window: HWND) {
         let start = editor::text(content);
         assert!(start.starts_with("Getting started"));
         assert!(start.contains("hotkey(\"Ctrl+Alt+J\", function()"));
+        verify_painted_code(content, "hotkey(\"Ctrl+Alt+J\", function()");
         verify_panel_width(window, content);
         assert_ne!(IsWindowVisible(copy), 0);
         let mut item = SendMessageW(nav, TVM_GETNEXTITEM, TVGN_ROOT as usize, 0);
@@ -493,6 +494,7 @@ pub(crate) fn verify_reference(window: HWND) {
         );
         assert!(editor::text(content).starts_with("Timing"));
         assert!(editor::text(content).contains("sleep(milliseconds)"));
+        verify_painted_code(content, "sleep(milliseconds)");
         assert_eq!(IsWindowVisible(copy), 0);
 
         item = SendMessageW(nav, TVM_GETNEXTITEM, TVGN_CHILD as usize, item);
@@ -511,7 +513,41 @@ pub(crate) fn verify_reference(window: HWND) {
         let colors = editor::foreground(content, math, math + 4);
         assert_eq!(colors, crate::highlight::tokens("math").next().unwrap().2);
         assert_ne!(colors, theme::TEXT);
+        SendMessageW(content, EM_SETSEL, 0, 0);
+        verify_painted_code(content, "local delay = math.floor(0.25 * 1000)");
     }
+}
+
+#[cfg(test)]
+fn verify_painted_code(content: HWND, line: &str) {
+    use windows_sys::Win32::Graphics::Gdi::GetPixel;
+
+    let raw = editor::raw_text(content);
+    let offset = raw.split_once(line).unwrap().0.encode_utf16().count();
+    painted(content, |dc, bounds| {
+        for (start, end, expected) in crate::highlight::tokens(line) {
+            let left = editor::position(content, offset + line[..start].encode_utf16().count());
+            let right = editor::position(content, offset + line[..end].encode_utf16().count());
+            assert_eq!(left.y, right.y);
+            let width = right.x - left.x;
+            let glyph_width = width / line[start..end].chars().count() as i32;
+            let bottom = (left.y + 4 * glyph_width).min(bounds.bottom);
+            let visible = (left.y.max(0)..bottom).any(|y| {
+                (left.x.max(0)..right.x.min(bounds.right)).any(|x| {
+                    let pixel = unsafe { GetPixel(dc, x, y) };
+                    // Text smoothing can blend pixels with the background.
+                    [0, 8, 16].into_iter().all(|shift| {
+                        ((pixel >> shift) & 255).abs_diff((expected >> shift) & 255) <= 16
+                    })
+                })
+            });
+            assert!(
+                visible,
+                "missing painted syntax color for {:?}",
+                &line[start..end]
+            );
+        }
+    });
 }
 
 #[cfg(test)]
@@ -587,15 +623,20 @@ fn verify_panel_width(window: HWND, content: HWND) {
             let line_height = (last.y - first.y) / 3;
             let y = first.y + line_height / 2;
             let (sides, outside) = painted(content, |dc, bounds| {
-                let left = first.x - 3;
-                let right = bounds.right - first.x;
+                let left = (0..first.x)
+                    .find(|&x| GetPixel(dc, x, y) == theme::BORDER)
+                    .unwrap();
+                let right = (bounds.right * 3 / 4..bounds.right)
+                    .rev()
+                    .find(|&x| GetPixel(dc, x, y) == theme::BORDER)
+                    .unwrap();
                 let ends = [y, y + line_height, last.y + line_height / 2];
                 (
                     ends.map(|y| [GetPixel(dc, left, y), GetPixel(dc, right, y)]),
                     GetPixel(dc, bounds.right - 3, y),
                 )
             });
-            assert_eq!(sides, [[content::CODE_BACKGROUND; 2]; 3]);
+            assert_eq!(sides, [[theme::BORDER; 2]; 3]);
             assert_eq!(outside, theme::EDITOR);
         }
     }
